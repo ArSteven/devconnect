@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Puerto      string
 	DatabaseURL string
+	JWTSecret   string
 	Entorno     string // "desarrollo" o "produccion"
 }
 
@@ -21,6 +22,7 @@ func Cargar() (Config, error) {
 	cfg := Config{
 		Puerto:      os.Getenv("PORT"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
+		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Entorno:     os.Getenv("ENV"),
 	}
 	if cfg.Puerto == "" {
@@ -31,6 +33,9 @@ func Cargar() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("falta la variable DATABASE_URL")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return cfg, errors.New("JWT_SECRET falta o tiene menos de 32 caracteres")
 	}
 	return cfg, nil
 }
