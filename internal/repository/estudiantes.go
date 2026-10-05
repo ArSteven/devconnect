@@ -115,7 +115,9 @@ func (r *EstudianteRepo) BuscarTalento(ctx context.Context, f model.FiltroTalent
 		 WHERE u.rol = 'estudiante'
 		   AND (cardinality($1::text[]) = 0
 		        OR pe.stack && $1::text[]
-		        OR EXISTS (SELECT 1 FROM publicaciones p WHERE p.autor_id = u.id AND p.lenguaje = ANY($1::text[])))
+		        OR EXISTS (SELECT 1 FROM publicaciones p WHERE p.autor_id = u.id AND p.lenguaje = ANY($1::text[]))
+		        OR EXISTS (SELECT 1 FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
+		                    WHERE pm.autor_id = u.id AND pm.estado = 'aceptada' AND p.lenguaje = ANY($1::text[])))
 		   AND ($2::text = '' OR lower(pe.ciudad) = lower($2::text))
 		   AND (NOT $3::boolean OR EXISTS (SELECT 1 FROM propuestas_mejora pm WHERE pm.autor_id = u.id AND pm.estado = 'aceptada'))
 		 ORDER BY mejoras DESC, pubs DESC, u.nombre

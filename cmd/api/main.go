@@ -51,6 +51,9 @@ func main() {
 	estService := service.NuevoEstudianteService(estudiantes, suscripciones)
 	estHandler := handler.NuevoEstudianteHandler(estService)
 
+	sesiones := repository.NuevoSesionRepo(pool)
+	sesHandler := handler.NuevoSesionHandler(service.NuevoSesionService(sesiones))
+
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	r.Use(middleware.CabecerasSeguridad())
@@ -76,6 +79,7 @@ func main() {
 	privado := v1.Group("", requiereAuth)
 	pubHandler.Rutas(privado)
 	estHandler.Rutas(privado)
+	sesHandler.Rutas(privado)
 
 	log.Printf("API escuchando en :%s (%s)", cfg.Puerto, cfg.Entorno)
 	if err := r.Run(":" + cfg.Puerto); err != nil {
