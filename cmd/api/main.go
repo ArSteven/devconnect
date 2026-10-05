@@ -46,6 +46,11 @@ func main() {
 	pubService := service.NuevoPublicacionService(publicaciones)
 	pubHandler := handler.NuevoPublicacionHandler(pubService)
 
+	estudiantes := repository.NuevoEstudianteRepo(pool)
+	suscripciones := repository.NuevoSuscripcionRepo(pool)
+	estService := service.NuevoEstudianteService(estudiantes, suscripciones)
+	estHandler := handler.NuevoEstudianteHandler(estService)
+
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	r.Use(middleware.CabecerasSeguridad())
@@ -70,6 +75,7 @@ func main() {
 	// Todo lo de aquí abajo exige sesión iniciada
 	privado := v1.Group("", requiereAuth)
 	pubHandler.Rutas(privado)
+	estHandler.Rutas(privado)
 
 	log.Printf("API escuchando en :%s (%s)", cfg.Puerto, cfg.Entorno)
 	if err := r.Run(":" + cfg.Puerto); err != nil {
