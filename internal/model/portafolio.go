@@ -14,9 +14,34 @@ type PerfilEstudiante struct {
 
 type TotalesPortafolio struct {
 	Publicaciones    int `json:"publicaciones"`
+	PropuestasHechas int `json:"propuestas_hechas"`
 	MejorasAportadas int `json:"mejoras_aportadas"`
 	MejorasRecibidas int `json:"mejoras_recibidas"`
+	Colaboradores    int `json:"colaboradores"`
 	Sesiones         int `json:"sesiones"`
+}
+
+// Habilidad: evidencia real por lenguaje, no lo que el estudiante dice saber.
+type Habilidad struct {
+	Lenguaje      string `json:"lenguaje"`
+	Publicaciones int    `json:"publicaciones"`
+	Aportes       int    `json:"aportes"`
+}
+
+// Destacado: una mejora suya que otra persona aceptó.
+type Destacado struct {
+	PropuestaID   string    `json:"propuesta_id"`
+	PublicacionID string    `json:"publicacion_id"`
+	Titulo        string    `json:"titulo"`
+	Lenguaje      string    `json:"lenguaje"`
+	AutorOriginal string    `json:"autor_original"`
+	Explicacion   string    `json:"explicacion"`
+	Fecha         time.Time `json:"fecha"`
+}
+
+type DiaActividad struct {
+	Fecha string `json:"fecha"` // AAAA-MM-DD
+	Total int    `json:"total"`
 }
 
 // EventoHistorial es un "commit" del portafolio.
@@ -38,6 +63,10 @@ type Contacto struct {
 type Portafolio struct {
 	Perfil            PerfilEstudiante  `json:"perfil"`
 	Totales           TotalesPortafolio `json:"totales"`
+	TasaAceptacion    *int              `json:"tasa_aceptacion"` // % de propuestas aceptadas; null si no ha propuesto
+	Habilidades       []Habilidad       `json:"habilidades"`
+	Destacados        []Destacado       `json:"destacados"`
+	Actividad         []DiaActividad    `json:"actividad"` // últimos 6 meses
 	Historial         []EventoHistorial `json:"historial"`
 	Contacto          *Contacto         `json:"contacto"`           // null si no tiene permiso
 	ContactoBloqueado bool              `json:"contacto_bloqueado"` // true = la empresa debe suscribirse

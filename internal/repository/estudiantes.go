@@ -43,12 +43,98 @@ func (r *EstudianteRepo) Totales(ctx context.Context, id string) (model.TotalesP
 	err := r.db.QueryRow(ctx,
 		`SELECT
 		   (SELECT count(*) FROM publicaciones WHERE autor_id = $1),
+		   (SELECT count(*) FROM propuestas_mejora WHERE autor_id = $1),
 		   (SELECT count(*) FROM propuestas_mejora WHERE autor_id = $1 AND estado = 'aceptada'),
 		   (SELECT count(*) FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
 		     WHERE p.autor_id = $1 AND pm.estado = 'aceptada'),
-		   (SELECT count(*) FROM sesiones_vivo WHERE anfitrion_id = $1)`, id,
-	).Scan(&t.Publicaciones, &t.MejorasAportadas, &t.MejorasRecibidas, &t.Sesiones)
+		   (SELECT count(DISTINCT x) FROM (
+		      SELECT p.autor_id AS x FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
+		       WHERE pm.autor_id = $1 AND pm.estado = 'aceptada'
+		      UNION
+		      SELECT pm.autor_id FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
+		       WHERE p.autor_id = $1 AND pm.estado = 'aceptada') c),
+		   (SELECT count(*) FROM sesiones_vivo WHERE anfitrion_id = $1 AND estado <> 'programada')`, id,
+	).Scan(&t.Publicaciones, &t.PropuestasHechas, &t.MejorasAportadas, &t.MejorasRecibidas, &t.Colaboradores, &t.Sesiones)
 	return t, err
+}
+
+// Habilidades suma, por lenguaje, lo que publicó y las mejoras que le aceptaron.
+func (r *EstudianteRepo) Habilidades(ctx context.Context, id string) ([]model.Habilidad, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT lenguaje, sum(pubs)::int, sum(aportes)::int FROM (
+		  SELECT p.lenguaje, 1 AS pubs, 0 AS aportes FROM publicaciones p WHERE p.autor_id = $1
+		  UNION ALL
+		  SELECT p.lenguaje, 0, 1 FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
+		   WHERE pm.autor_id = $1 AND pm.estado = 'aceptada'
+		) t
+		GROUP BY lenguaje
+		ORDER BY sum(aportes) DESC, sum(pubs) DESC
+		LIMIT 8`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	lista := []model.Habilidad{}
+	for rows.Next() {
+		var h model.Habilidad
+		if err := rows.Scan(&h.Lenguaje, &h.Publicaciones, &h.Aportes); err != nil {
+			return nil, err
+		}
+		lista = append(lista, h)
+	}
+	return lista, rows.Err()
+}
+
+// Destacados: sus mejoras aceptadas más recientes, con el problema que resolvieron.
+func (r *EstudianteRepo) Destacados(ctx context.Context, id string) ([]model.Destacado, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT pm.id::text, p.id::text, p.titulo, p.lenguaje, ua.nombre, pm.explicacion, pm.actualizado_en
+		  FROM propuestas_mejora pm
+		  JOIN publicaciones p ON p.id = pm.publicacion_id
+		  JOIN usuarios ua ON ua.id = p.autor_id
+		 WHERE pm.autor_id = $1 AND pm.estado = 'aceptada'
+		 ORDER BY pm.actualizado_en DESC
+		 LIMIT 4`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	lista := []model.Destacado{}
+	for rows.Next() {
+		var d model.Destacado
+		if err := rows.Scan(&d.PropuestaID, &d.PublicacionID, &d.Titulo, &d.Lenguaje, &d.AutorOriginal, &d.Explicacion, &d.Fecha); err != nil {
+			return nil, err
+		}
+		lista = append(lista, d)
+	}
+	return lista, rows.Err()
+}
+
+// Actividad cuenta contribuciones por día en los últimos 6 meses (para el mapa de calor).
+func (r *EstudianteRepo) Actividad(ctx context.Context, id string) ([]model.DiaActividad, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT to_char(dia, 'YYYY-MM-DD'), count(*)::int FROM (
+		  SELECT creado_en::date AS dia FROM publicaciones WHERE autor_id = $1
+		  UNION ALL SELECT creado_en::date FROM propuestas_mejora WHERE autor_id = $1
+		  UNION ALL SELECT creado_en::date FROM comentarios WHERE autor_id = $1
+		  UNION ALL SELECT inicia_en::date FROM sesiones_vivo WHERE anfitrion_id = $1 AND estado <> 'programada'
+		) t
+		WHERE dia > current_date - 182
+		GROUP BY dia
+		ORDER BY dia`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	lista := []model.DiaActividad{}
+	for rows.Next() {
+		var d model.DiaActividad
+		if err := rows.Scan(&d.Fecha, &d.Total); err != nil {
+			return nil, err
+		}
+		lista = append(lista, d)
+	}
+	return lista, rows.Err()
 }
 
 // Historial arma la línea de tiempo del portafolio a partir de la actividad real.

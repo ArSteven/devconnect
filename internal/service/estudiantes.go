@@ -39,8 +39,28 @@ func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitan
 	if err != nil {
 		return nil, err
 	}
+	habilidades, err := s.estudiantes.Habilidades(ctx, estudianteID)
+	if err != nil {
+		return nil, err
+	}
+	destacados, err := s.estudiantes.Destacados(ctx, estudianteID)
+	if err != nil {
+		return nil, err
+	}
+	actividad, err := s.estudiantes.Actividad(ctx, estudianteID)
+	if err != nil {
+		return nil, err
+	}
 
-	p := &model.Portafolio{Perfil: *perfil, Totales: totales, Historial: historial}
+	p := &model.Portafolio{
+		Perfil: *perfil, Totales: totales, Historial: historial,
+		Habilidades: habilidades, Destacados: destacados, Actividad: actividad,
+	}
+	// La tasa de aceptación es la señal de calidad: no cuenta cuánto propone, sino cuánto le aceptan.
+	if totales.PropuestasHechas > 0 {
+		tasa := (totales.MejorasAportadas*100 + totales.PropuestasHechas/2) / totales.PropuestasHechas
+		p.TasaAceptacion = &tasa
+	}
 
 	puedeVer := visitanteID == estudianteID
 	if !puedeVer && visitanteRol == "empresa" {
