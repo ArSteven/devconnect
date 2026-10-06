@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ArSteven/devconnect/internal/model"
 	"github.com/ArSteven/devconnect/internal/repository"
@@ -24,13 +27,22 @@ func NuevoEstudianteService(e *repository.EstudianteRepo, s *repository.Suscripc
 // ve el portafolio, pero el contacto solo lo ve el propio estudiante o una
 // empresa con suscripción vigente.
 func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitanteRol, estudianteID string) (*model.Portafolio, error) {
-	perfil, correo, err := s.estudiantes.Perfil(ctx, estudianteID)
+	perfil, nacimiento, correo, err := s.estudiantes.Perfil(ctx, estudianteID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
 		return nil, ErrNoEncontrada
 	}
 	if err != nil {
 		return nil, err
 	}
+	// La edad se calcula y se muestra; la fecha de nacimiento solo la ve el dueño.
+	if nacimiento != nil {
+		edad := calcularEdad(*nacimiento, time.Now())
+		perfil.Edad = &edad
+		if visitanteID == estudianteID {
+			perfil.FechaNacimiento = nacimiento.Format("2006-01-02")
+		}
+	}
+
 	totales, err := s.estudiantes.Totales(ctx, estudianteID)
 	if err != nil {
 		return nil, err
@@ -78,13 +90,89 @@ func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitan
 	return p, nil
 }
 
+var ErrPerfilInvalido = errors.New("perfil inválido")
+
 func (s *EstudianteService) ActualizarPerfil(ctx context.Context, id string, in model.ActualizarPerfilInput) error {
-	in.Programa = strings.TrimSpace(in.Programa)
-	in.Institucion = strings.TrimSpace(in.Institucion)
-	in.Ciudad = strings.TrimSpace(in.Ciudad)
-	in.Biografia = strings.TrimSpace(in.Biografia)
+	limpiar := func(v *string) { *v = strings.TrimSpace(*v) }
+	for _, campo := range []*string{&in.Titular, &in.Programa, &in.Institucion, &in.Ciudad, &in.Biografia,
+		&in.GithubURL, &in.LinkedinURL, &in.SitioURL} {
+		limpiar(campo)
+	}
 	in.Stack = normalizarLista(in.Stack, 15)
+	in.Idiomas = normalizarIdiomas(in.Idiomas)
+	if in.Experiencia == nil {
+		in.Experiencia = []model.Experiencia{}
+	}
+
+	// Los enlaces solo pueden ser https y del sitio que dicen ser: así nadie mete
+	// un enlace "javascript:" ni disfraza otro sitio como su LinkedIn.
+	if !enlaceValido(in.GithubURL, "github.com") || !enlaceValido(in.LinkedinURL, "linkedin.com") || !enlaceValido(in.SitioURL, "") {
+		return fmt.Errorf("%w: los enlaces deben empezar por https:// y apuntar al sitio correcto", ErrPerfilInvalido)
+	}
+	if in.FechaNacimiento != "" {
+		f, err := time.Parse("2006-01-02", in.FechaNacimiento)
+		if err != nil {
+			return fmt.Errorf("%w: fecha de nacimiento inválida", ErrPerfilInvalido)
+		}
+		if edad := calcularEdad(f, time.Now()); edad < 15 || edad > 80 {
+			return fmt.Errorf("%w: revisa la fecha de nacimiento", ErrPerfilInvalido)
+		}
+	}
+	if in.AnioInicio != nil && in.AnioFin != nil && *in.AnioFin < *in.AnioInicio {
+		return fmt.Errorf("%w: el año de finalización no puede ser anterior al de inicio", ErrPerfilInvalido)
+	}
+	for i := range in.Experiencia {
+		e := &in.Experiencia[i]
+		limpiar(&e.Cargo)
+		limpiar(&e.Empresa)
+		limpiar(&e.Descripcion)
+		if e.Fin != "" && e.Fin < e.Inicio { // AAAA-MM se compara bien como texto
+			return fmt.Errorf("%w: en experiencia, la fecha de fin es anterior a la de inicio", ErrPerfilInvalido)
+		}
+	}
 	return s.estudiantes.ActualizarPerfil(ctx, id, in)
+}
+
+func enlaceValido(u, dominio string) bool {
+	if u == "" {
+		return true
+	}
+	p, err := url.Parse(u)
+	if err != nil || p.Scheme != "https" || p.Host == "" {
+		return false
+	}
+	if dominio == "" {
+		return true
+	}
+	host := strings.ToLower(p.Host)
+	return host == dominio || strings.HasSuffix(host, "."+dominio)
+}
+
+func calcularEdad(nacimiento, hoy time.Time) int {
+	edad := hoy.Year() - nacimiento.Year()
+	if hoy.YearDay() < nacimiento.YearDay() {
+		edad--
+	}
+	return edad
+}
+
+// normalizarIdiomas conserva mayúsculas ("Inglés B2") pero quita vacíos y repetidos.
+func normalizarIdiomas(items []string) []string {
+	vistos := map[string]bool{}
+	lista := []string{}
+	for _, it := range items {
+		it = strings.TrimSpace(it)
+		clave := strings.ToLower(it)
+		if it == "" || vistos[clave] {
+			continue
+		}
+		vistos[clave] = true
+		lista = append(lista, it)
+		if len(lista) == 6 {
+			break
+		}
+	}
+	return lista
 }
 
 func (s *EstudianteService) BuscarTalento(ctx context.Context, f model.FiltroTalento) ([]model.TarjetaTalento, error) {

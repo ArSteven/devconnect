@@ -57,6 +57,10 @@ func (h *EstudianteHandler) actualizarPerfil(c *gin.Context) {
 		return
 	}
 	if err := h.svc.ActualizarPerfil(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), in); err != nil {
+		if errors.Is(err, service.ErrPerfilInvalido) {
+			responderError(c, http.StatusBadRequest, "PERFIL_INVALIDO", strings.TrimPrefix(err.Error(), "perfil inválido: "))
+			return
+		}
 		errorInterno(c, err)
 		return
 	}

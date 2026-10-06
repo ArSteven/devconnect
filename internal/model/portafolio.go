@@ -2,14 +2,36 @@ package model
 
 import "time"
 
+type Experiencia struct {
+	Cargo       string `json:"cargo" binding:"required,max=100"`
+	Empresa     string `json:"empresa" binding:"required,max=100"`
+	Inicio      string `json:"inicio" binding:"required,datetime=2006-01"`  // AAAA-MM
+	Fin         string `json:"fin" binding:"omitempty,datetime=2006-01"`     // vacío = actual
+	Descripcion string `json:"descripcion" binding:"max=500"`
+}
+
 type PerfilEstudiante struct {
-	ID          string   `json:"id"`
-	Nombre      string   `json:"nombre"`
-	Programa    string   `json:"programa"`
-	Institucion string   `json:"institucion"`
-	Ciudad      string   `json:"ciudad"`
-	Stack       []string `json:"stack"`
-	Biografia   string   `json:"biografia"`
+	ID              string        `json:"id"`
+	Nombre          string        `json:"nombre"`
+	Titular         string        `json:"titular"`
+	Edad            *int          `json:"edad"`                       // se calcula; la fecha no se expone
+	FechaNacimiento string        `json:"fecha_nacimiento,omitempty"` // solo la ve el dueño
+	Programa        string        `json:"programa"`
+	Institucion     string        `json:"institucion"`
+	Semestre        *int          `json:"semestre"`
+	EstadoAcademico string        `json:"estado_academico"`
+	AnioInicio      *int          `json:"anio_inicio"`
+	AnioFin         *int          `json:"anio_fin"`
+	Ciudad          string        `json:"ciudad"`
+	Disponibilidad  string        `json:"disponibilidad"`
+	Modalidad       string        `json:"modalidad"`
+	GithubURL       string        `json:"github_url"`
+	LinkedinURL     string        `json:"linkedin_url"`
+	SitioURL        string        `json:"sitio_url"`
+	Stack           []string      `json:"stack"`
+	Idiomas         []string      `json:"idiomas"`
+	Experiencia     []Experiencia `json:"experiencia"`
+	Biografia       string        `json:"biografia"`
 }
 
 type TotalesPortafolio struct {
@@ -97,11 +119,24 @@ type Suscripcion struct {
 }
 
 type ActualizarPerfilInput struct {
-	Programa    string   `json:"programa" binding:"max=150"`
-	Institucion string   `json:"institucion" binding:"max=150"`
-	Ciudad      string   `json:"ciudad" binding:"max=100"`
-	Stack       []string `json:"stack" binding:"max=15,dive,min=1,max=30"`
-	Biografia   string   `json:"biografia" binding:"max=500"`
+	Titular         string        `json:"titular" binding:"max=120"`
+	FechaNacimiento string        `json:"fecha_nacimiento" binding:"omitempty,datetime=2006-01-02"`
+	Programa        string        `json:"programa" binding:"max=150"`
+	Institucion     string        `json:"institucion" binding:"max=150"`
+	Semestre        *int          `json:"semestre" binding:"omitempty,min=1,max=12"`
+	EstadoAcademico string        `json:"estado_academico" binding:"omitempty,oneof=cursando egresado"`
+	AnioInicio      *int          `json:"anio_inicio" binding:"omitempty,min=1990,max=2040"`
+	AnioFin         *int          `json:"anio_fin" binding:"omitempty,min=1990,max=2045"`
+	Ciudad          string        `json:"ciudad" binding:"max=100"`
+	Disponibilidad  string        `json:"disponibilidad" binding:"omitempty,oneof=practicas medio_tiempo tiempo_completo freelance no_disponible"`
+	Modalidad       string        `json:"modalidad" binding:"omitempty,oneof=presencial remoto hibrido"`
+	GithubURL       string        `json:"github_url" binding:"max=200"`
+	LinkedinURL     string        `json:"linkedin_url" binding:"max=200"`
+	SitioURL        string        `json:"sitio_url" binding:"max=200"`
+	Stack           []string      `json:"stack" binding:"max=15,dive,min=1,max=30"`
+	Idiomas         []string      `json:"idiomas" binding:"max=6,dive,min=2,max=40"`
+	Experiencia     []Experiencia `json:"experiencia" binding:"max=10,dive"`
+	Biografia       string        `json:"biografia" binding:"max=1000"`
 }
 
 type SuscribirseInput struct {

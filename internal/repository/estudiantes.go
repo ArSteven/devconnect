@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/ArSteven/devconnect/internal/model"
 	"github.com/jackc/pgx/v5"
@@ -17,25 +18,50 @@ func NuevoEstudianteRepo(db *pgxpool.Pool) *EstudianteRepo {
 	return &EstudianteRepo{db: db}
 }
 
-// Perfil devuelve el perfil público y, aparte, el correo (que solo se muestra con permiso).
-func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEstudiante, string, error) {
+// Perfil devuelve el perfil completo, la fecha de nacimiento y, aparte, el correo
+// (que solo se muestra con permiso).
+func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEstudiante, *time.Time, string, error) {
 	var p model.PerfilEstudiante
+	var nacimiento *time.Time
 	var correo string
+	var semestre, anioInicio, anioFin *int16
 	err := r.db.QueryRow(ctx,
 		`SELECT u.id::text, u.nombre, u.correo,
-		        COALESCE(pe.programa, ''), COALESCE(pe.institucion, ''), COALESCE(pe.ciudad, ''),
-		        pe.stack, COALESCE(pe.biografia, '')
+		        COALESCE(pe.titular, ''), pe.fecha_nacimiento,
+		        COALESCE(pe.programa, ''), COALESCE(pe.institucion, ''), pe.semestre,
+		        COALESCE(pe.estado_academico, ''), pe.anio_inicio, pe.anio_fin,
+		        COALESCE(pe.ciudad, ''), COALESCE(pe.disponibilidad, ''), COALESCE(pe.modalidad, ''),
+		        COALESCE(pe.github_url, ''), COALESCE(pe.linkedin_url, ''), COALESCE(pe.sitio_url, ''),
+		        pe.stack, pe.idiomas, pe.experiencia, COALESCE(pe.biografia, '')
 		   FROM usuarios u
 		   JOIN perfiles_estudiante pe ON pe.usuario_id = u.id
 		  WHERE u.id = $1`, id,
-	).Scan(&p.ID, &p.Nombre, &correo, &p.Programa, &p.Institucion, &p.Ciudad, &p.Stack, &p.Biografia)
+	).Scan(&p.ID, &p.Nombre, &correo,
+		&p.Titular, &nacimiento,
+		&p.Programa, &p.Institucion, &semestre,
+		&p.EstadoAcademico, &anioInicio, &anioFin,
+		&p.Ciudad, &p.Disponibilidad, &p.Modalidad,
+		&p.GithubURL, &p.LinkedinURL, &p.SitioURL,
+		&p.Stack, &p.Idiomas, &p.Experiencia, &p.Biografia)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", ErrNoEncontrado
+		return nil, nil, "", ErrNoEncontrado
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	return &p, correo, nil
+	p.Semestre, p.AnioInicio, p.AnioFin = aInt(semestre), aInt(anioInicio), aInt(anioFin)
+	if p.Experiencia == nil {
+		p.Experiencia = []model.Experiencia{}
+	}
+	return &p, nacimiento, correo, nil
+}
+
+func aInt(v *int16) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v)
+	return &n
 }
 
 func (r *EstudianteRepo) Totales(ctx context.Context, id string) (model.TotalesPortafolio, error) {
@@ -179,10 +205,20 @@ func (r *EstudianteRepo) Historial(ctx context.Context, id string) ([]model.Even
 func (r *EstudianteRepo) ActualizarPerfil(ctx context.Context, id string, in model.ActualizarPerfilInput) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE perfiles_estudiante
-		    SET programa = NULLIF($2, ''), institucion = NULLIF($3, ''), ciudad = NULLIF($4, ''),
-		        stack = $5, biografia = NULLIF($6, ''), actualizado_en = now()
+		    SET titular = NULLIF($2, ''), fecha_nacimiento = NULLIF($3, '')::date,
+		        programa = NULLIF($4, ''), institucion = NULLIF($5, ''), semestre = $6,
+		        estado_academico = NULLIF($7, ''), anio_inicio = $8, anio_fin = $9,
+		        ciudad = NULLIF($10, ''), disponibilidad = NULLIF($11, ''), modalidad = NULLIF($12, ''),
+		        github_url = NULLIF($13, ''), linkedin_url = NULLIF($14, ''), sitio_url = NULLIF($15, ''),
+		        stack = $16, idiomas = $17, experiencia = $18, biografia = NULLIF($19, ''),
+		        actualizado_en = now()
 		  WHERE usuario_id = $1`,
-		id, in.Programa, in.Institucion, in.Ciudad, in.Stack, in.Biografia)
+		id, in.Titular, in.FechaNacimiento,
+		in.Programa, in.Institucion, in.Semestre,
+		in.EstadoAcademico, in.AnioInicio, in.AnioFin,
+		in.Ciudad, in.Disponibilidad, in.Modalidad,
+		in.GithubURL, in.LinkedinURL, in.SitioURL,
+		in.Stack, in.Idiomas, in.Experiencia, in.Biografia)
 	return err
 }
 
