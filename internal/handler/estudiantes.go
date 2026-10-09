@@ -26,8 +26,13 @@ func (h *EstudianteHandler) Rutas(g *gin.RouterGroup) {
 
 	g.GET("/estudiantes/:id/portafolio", h.portafolio)
 	g.PUT("/estudiantes/yo/perfil", soloEstudiante, h.actualizarPerfil)
+	g.GET("/estudiantes/destacados", h.destacados)
+	g.GET("/catalogos", h.catalogos)
 
 	g.GET("/talento", soloEmpresa, h.talento)
+	g.GET("/candidatos", soloEmpresa, h.candidatos)
+	g.PUT("/candidatos/:id", soloEmpresa, h.guardarCandidato)
+	g.DELETE("/candidatos/:id", soloEmpresa, h.quitarCandidato)
 	g.GET("/suscripciones/actual", soloEmpresa, h.suscripcionActual)
 	g.POST("/suscripciones", soloEmpresa, h.suscribirse)
 }
@@ -67,27 +72,77 @@ func (h *EstudianteHandler) actualizarPerfil(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// talento: GET /talento?lenguaje=go,angular&ciudad=bucaramanga&con_mejoras=true
+// talento: GET /talento?lenguaje=go,angular&ciudad=area_metropolitana&institucion=...&nivel=medio
+// &disponibilidad=practicas&modalidad=presencial&con_mejoras=true
 func (h *EstudianteHandler) talento(c *gin.Context) {
-	var lenguajes []string
-	if l := c.Query("lenguaje"); l != "" {
-		lenguajes = strings.Split(l, ",")
-	}
-	ciudad := c.Query("ciudad")
-	if len(ciudad) > 100 {
-		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "ciudad demasiado larga")
+	var q model.FiltroTalentoQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "revisa los filtros de búsqueda")
 		return
 	}
-	lista, err := h.svc.BuscarTalento(c.Request.Context(), model.FiltroTalento{
-		Lenguajes:  lenguajes,
-		Ciudad:     ciudad,
-		ConMejoras: c.Query("con_mejoras") == "true",
-	})
+	lista, err := h.svc.BuscarTalento(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), q)
 	if err != nil {
 		errorInterno(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"talento": lista, "total": len(lista)})
+}
+
+func (h *EstudianteHandler) candidatos(c *gin.Context) {
+	lista, conCorreo, err := h.svc.Candidatos(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID))
+	if err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"candidatos": lista, "con_correo": conCorreo})
+}
+
+func (h *EstudianteHandler) guardarCandidato(c *gin.Context) {
+	id, ok := idValido(c)
+	if !ok {
+		return
+	}
+	err := h.svc.GuardarCandidato(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), id)
+	switch {
+	case errors.Is(err, service.ErrNoEncontrada):
+		responderError(c, http.StatusNotFound, "NO_ENCONTRADO", "ese estudiante no existe")
+	case errors.Is(err, service.ErrDemasiadosCandidatos):
+		responderError(c, http.StatusConflict, "LIMITE_CANDIDATOS", err.Error())
+	case err != nil:
+		errorInterno(c, err)
+	default:
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func (h *EstudianteHandler) quitarCandidato(c *gin.Context) {
+	id, ok := idValido(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.QuitarCandidato(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), id); err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *EstudianteHandler) destacados(c *gin.Context) {
+	lista, dias, err := h.svc.DestacadosSemana(c.Request.Context())
+	if err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"estudiantes": lista, "dias": dias})
+}
+
+func (h *EstudianteHandler) catalogos(c *gin.Context) {
+	cat, err := h.svc.Catalogos(c.Request.Context())
+	if err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, cat)
 }
 
 func (h *EstudianteHandler) suscripcionActual(c *gin.Context) {

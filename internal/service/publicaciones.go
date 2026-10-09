@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/ArSteven/devconnect/internal/model"
 	"github.com/ArSteven/devconnect/internal/repository"
@@ -12,25 +13,32 @@ import (
 const porPagina = 20
 
 var (
-	ErrNoEncontrada      = errors.New("no existe")
-	ErrPropiaPublicacion = errors.New("no puedes proponer mejoras a tu propia publicación")
-	ErrNoEsAutor         = errors.New("solo el autor de la publicación puede decidir sobre sus propuestas")
-	ErrYaDecidida        = errors.New("esta propuesta ya fue aceptada o rechazada")
+	ErrNoEncontrada        = errors.New("no existe")
+	ErrPropiaPublicacion   = errors.New("no puedes proponer mejoras a tu propia publicación")
+	ErrNoEsAutor           = errors.New("solo el autor de la publicación puede decidir sobre sus propuestas")
+	ErrYaDecidida          = errors.New("esta propuesta ya fue aceptada o rechazada")
+	ErrRequiereSuscripcion = errors.New("esta función requiere una suscripción de empresa activa")
+	ErrRetoCerrado         = errors.New("este reto ya cerró: la fecha límite pasó")
+	ErrFechaLimiteReto     = errors.New("la fecha límite debe estar entre una hora y 90 días desde ahora")
 )
 
 type PublicacionService struct {
-	repo *repository.PublicacionRepo
+	repo          *repository.PublicacionRepo
+	suscripciones *repository.SuscripcionRepo
 }
 
-func NuevoPublicacionService(r *repository.PublicacionRepo) *PublicacionService {
-	return &PublicacionService{repo: r}
+func NuevoPublicacionService(r *repository.PublicacionRepo, s *repository.SuscripcionRepo) *PublicacionService {
+	return &PublicacionService{repo: r, suscripciones: s}
 }
 
-func (s *PublicacionService) Listar(ctx context.Context, lenguaje string, pagina int) ([]model.Publicacion, error) {
-	if pagina < 1 {
-		pagina = 1
+// Listar normaliza la búsqueda y la institución para que "Girón" encuentre "giron".
+func (s *PublicacionService) Listar(ctx context.Context, f model.FiltroPublicaciones) ([]model.Publicacion, error) {
+	if f.Pagina < 1 {
+		f.Pagina = 1
 	}
-	return s.repo.Listar(ctx, strings.ToLower(lenguaje), porPagina, (pagina-1)*porPagina)
+	f.Q = normalizarTexto(f.Q)
+	f.Institucion = normalizarTexto(f.Institucion)
+	return s.repo.Listar(ctx, f, porPagina, (f.Pagina-1)*porPagina)
 }
 
 func (s *PublicacionService) Crear(ctx context.Context, autorID string, in model.NuevaPublicacionInput) (*model.Publicacion, error) {
@@ -40,6 +48,33 @@ func (s *PublicacionService) Crear(ctx context.Context, autorID string, in model
 		Descripcion: strings.TrimSpace(in.Descripcion),
 		Lenguaje:    in.Lenguaje,
 		Codigo:      in.Codigo, // el código se guarda tal cual: es texto, nunca se ejecuta
+		Tipo:        "pregunta",
+	}
+	if err := s.repo.Crear(ctx, p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// CrearReto: solo una empresa con suscripción vigente publica retos. La suscripción
+// se consulta aquí, en el momento, no se confía en lo que diga el frontend.
+func (s *PublicacionService) CrearReto(ctx context.Context, empresaID string, in model.NuevoRetoInput) (*model.Publicacion, error) {
+	if err := s.exigirSuscripcion(ctx, empresaID); err != nil {
+		return nil, err
+	}
+	ahora := time.Now()
+	if in.FechaLimite.Before(ahora.Add(time.Hour)) || in.FechaLimite.After(ahora.Add(90*24*time.Hour)) {
+		return nil, ErrFechaLimiteReto
+	}
+	limite := in.FechaLimite
+	p := &model.Publicacion{
+		AutorID:     empresaID,
+		Titulo:      strings.TrimSpace(in.Titulo),
+		Descripcion: strings.TrimSpace(in.Descripcion),
+		Lenguaje:    in.Lenguaje,
+		Codigo:      in.Codigo,
+		Tipo:        "reto",
+		FechaLimite: &limite,
 	}
 	if err := s.repo.Crear(ctx, p); err != nil {
 		return nil, err
@@ -67,6 +102,7 @@ func (s *PublicacionService) Detalle(ctx context.Context, id string) (*model.Det
 }
 
 // Proponer: cualquier estudiante puede proponer una mejora, excepto el autor.
+// En un reto, solo mientras no haya pasado la fecha límite.
 func (s *PublicacionService) Proponer(ctx context.Context, autorID, publicacionID string, in model.NuevaPropuestaInput) (*model.Propuesta, error) {
 	pub, err := s.repo.Obtener(ctx, publicacionID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
@@ -77,6 +113,9 @@ func (s *PublicacionService) Proponer(ctx context.Context, autorID, publicacionI
 	}
 	if pub.AutorID == autorID {
 		return nil, ErrPropiaPublicacion
+	}
+	if pub.Tipo == "reto" && pub.FechaLimite != nil && time.Now().After(*pub.FechaLimite) {
+		return nil, ErrRetoCerrado
 	}
 	p := &model.Propuesta{
 		PublicacionID: publicacionID,
@@ -92,7 +131,8 @@ func (s *PublicacionService) Proponer(ctx context.Context, autorID, publicacionI
 
 // Decidir: solo el autor de la publicación acepta o rechaza, y solo una vez.
 // Una propuesta aceptada es la que después cuenta en el portafolio de quien la hizo.
-func (s *PublicacionService) Decidir(ctx context.Context, usuarioID, propuestaID, estado string) error {
+// Si quien decide es una empresa (su reto), elegir ganador exige suscripción vigente.
+func (s *PublicacionService) Decidir(ctx context.Context, usuarioID, rol, propuestaID, estado string) error {
 	info, err := s.repo.InfoPropuesta(ctx, propuestaID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
 		return ErrNoEncontrada
@@ -102,6 +142,11 @@ func (s *PublicacionService) Decidir(ctx context.Context, usuarioID, propuestaID
 	}
 	if info.AutorPublicacion != usuarioID {
 		return ErrNoEsAutor
+	}
+	if rol == "empresa" {
+		if err := s.exigirSuscripcion(ctx, usuarioID); err != nil {
+			return err
+		}
 	}
 	if info.Estado != "pendiente" {
 		return ErrYaDecidida
@@ -125,4 +170,12 @@ func (s *PublicacionService) Comentar(ctx context.Context, autorID, publicacionI
 		return nil, err
 	}
 	return c, nil
+}
+
+func (s *PublicacionService) exigirSuscripcion(ctx context.Context, empresaID string) error {
+	_, err := s.suscripciones.Activa(ctx, empresaID)
+	if errors.Is(err, repository.ErrNoEncontrado) {
+		return ErrRequiereSuscripcion
+	}
+	return err
 }

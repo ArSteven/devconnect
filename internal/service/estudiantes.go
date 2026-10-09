@@ -25,7 +25,7 @@ func NuevoEstudianteService(e *repository.EstudianteRepo, s *repository.Suscripc
 
 // Portafolio aplica la regla central del modelo freemium: cualquiera con sesión
 // ve el portafolio, pero el contacto solo lo ve el propio estudiante o una
-// empresa con suscripción vigente.
+// empresa con suscripción vigente, y a la empresa solo si el estudiante lo permite.
 func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitanteRol, estudianteID string) (*model.Portafolio, error) {
 	perfil, nacimiento, correo, err := s.estudiantes.Perfil(ctx, estudianteID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
@@ -74,17 +74,24 @@ func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitan
 		p.TasaAceptacion = &tasa
 	}
 
-	puedeVer := visitanteID == estudianteID
-	if !puedeVer && visitanteRol == "empresa" {
-		_, err := s.suscripciones.Activa(ctx, visitanteID)
-		if err != nil && !errors.Is(err, repository.ErrNoEncontrado) {
+	esDueno := visitanteID == estudianteID
+	suscrita := false
+	if !esDueno && visitanteRol == "empresa" {
+		if suscrita, err = s.tieneSuscripcion(ctx, visitanteID); err != nil {
 			return nil, err
 		}
-		puedeVer = err == nil
+		if p.Guardado, err = s.estudiantes.EsCandidatoGuardado(ctx, visitanteID, estudianteID); err != nil {
+			return nil, err
+		}
 	}
-	if puedeVer {
+	switch {
+	case esDueno || suscrita && perfil.ContactoVisible:
 		p.Contacto = &model.Contacto{Correo: correo}
-	} else {
+	case visitanteRol == "empresa" && !perfil.ContactoVisible:
+		// El estudiante decidió no compartirlo: a ninguna empresa se le ofrece
+		// suscribirse para ver un correo que de todos modos no vería.
+		p.ContactoOculto = true
+	default:
 		p.ContactoBloqueado = visitanteRol == "empresa"
 	}
 	return p, nil
@@ -175,10 +182,92 @@ func normalizarIdiomas(items []string) []string {
 	return lista
 }
 
-func (s *EstudianteService) BuscarTalento(ctx context.Context, f model.FiltroTalento) ([]model.TarjetaTalento, error) {
-	f.Lenguajes = normalizarLista(f.Lenguajes, 10)
-	f.Ciudad = strings.TrimSpace(f.Ciudad)
+// AreaMetropolitana es el valor especial del filtro de ciudad: Bucaramanga y su área
+// metropolitana, que es donde las empresas buscan practicantes presenciales.
+const AreaMetropolitana = "area_metropolitana"
+
+var municipiosAMB = []string{"bucaramanga", "floridablanca", "giron", "piedecuesta"}
+
+func (s *EstudianteService) BuscarTalento(ctx context.Context, empresaID string, q model.FiltroTalentoQuery) ([]model.TarjetaTalento, error) {
+	f := model.FiltroTalento{
+		Lenguajes:      normalizarLista(strings.Split(q.Lenguaje, ","), 10),
+		Institucion:    normalizarTexto(q.Institucion),
+		Nivel:          q.Nivel,
+		Disponibilidad: q.Disponibilidad,
+		Modalidad:      q.Modalidad,
+		ConMejoras:     q.ConMejoras,
+		EmpresaID:      empresaID,
+	}
+	switch ciudad := normalizarTexto(q.Ciudad); ciudad {
+	case "":
+	case AreaMetropolitana:
+		f.Ciudades = municipiosAMB
+	default:
+		f.Ciudades = []string{ciudad}
+	}
 	return s.estudiantes.BuscarTalento(ctx, f)
+}
+
+// maxCandidatos evita que una sola cuenta llene la tabla.
+const maxCandidatos = 300
+
+var ErrDemasiadosCandidatos = fmt.Errorf("tu lista ya tiene %d candidatos: quita alguno antes de guardar otro", maxCandidatos)
+
+// Candidatos devuelve la lista guardada. El correo solo sale con suscripción activa
+// y si el estudiante permite mostrarlo: la regla se aplica aquí, no en el frontend.
+func (s *EstudianteService) Candidatos(ctx context.Context, empresaID string) ([]model.Candidato, bool, error) {
+	lista, err := s.estudiantes.ListarCandidatos(ctx, empresaID)
+	if err != nil {
+		return nil, false, err
+	}
+	activa, err := s.tieneSuscripcion(ctx, empresaID)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range lista {
+		if !activa || !lista[i].ContactoVisible {
+			lista[i].Correo = ""
+		}
+	}
+	return lista, activa, nil
+}
+
+func (s *EstudianteService) GuardarCandidato(ctx context.Context, empresaID, estudianteID string) error {
+	err := s.estudiantes.GuardarCandidato(ctx, empresaID, estudianteID, maxCandidatos)
+	switch {
+	case errors.Is(err, repository.ErrNoEncontrado):
+		return ErrNoEncontrada
+	case errors.Is(err, repository.ErrLimite):
+		return ErrDemasiadosCandidatos
+	}
+	return err
+}
+
+func (s *EstudianteService) QuitarCandidato(ctx context.Context, empresaID, estudianteID string) error {
+	return s.estudiantes.QuitarCandidato(ctx, empresaID, estudianteID)
+}
+
+// DestacadosSemana: si en 7 días nadie logró mejoras aceptadas, amplía a 30 para no mostrar un vacío.
+func (s *EstudianteService) DestacadosSemana(ctx context.Context) ([]model.EstudianteDestacado, int, error) {
+	for _, dias := range []int{7, 30} {
+		lista, err := s.estudiantes.DestacadosRecientes(ctx, dias, 5)
+		if err != nil || len(lista) > 0 {
+			return lista, dias, err
+		}
+	}
+	return []model.EstudianteDestacado{}, 30, nil
+}
+
+func (s *EstudianteService) Catalogos(ctx context.Context) (*model.Catalogos, error) {
+	return s.estudiantes.Catalogos(ctx)
+}
+
+func (s *EstudianteService) tieneSuscripcion(ctx context.Context, empresaID string) (bool, error) {
+	_, err := s.suscripciones.Activa(ctx, empresaID)
+	if errors.Is(err, repository.ErrNoEncontrado) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *EstudianteService) SuscripcionActual(ctx context.Context, empresaID string) (*model.Suscripcion, error) {

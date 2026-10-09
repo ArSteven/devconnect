@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
-	"strconv"
 
 	"github.com/ArSteven/devconnect/internal/middleware"
 	"github.com/ArSteven/devconnect/internal/model"
@@ -25,23 +24,46 @@ func NuevoPublicacionHandler(s *service.PublicacionService) *PublicacionHandler 
 // Rutas espera un grupo que ya pasa por RequiereAuth.
 func (h *PublicacionHandler) Rutas(g *gin.RouterGroup) {
 	soloEstudiante := middleware.RequiereRol("estudiante")
+	soloEmpresa := middleware.RequiereRol("empresa")
+	// La empresa decide sobre las soluciones de sus retos; el service verifica que sea la autora.
+	autores := middleware.RequiereRol("estudiante", "empresa")
 
 	g.GET("/publicaciones", h.listar)
 	g.POST("/publicaciones", soloEstudiante, h.crear)
 	g.GET("/publicaciones/:id", h.detalle)
 	g.POST("/publicaciones/:id/propuestas", soloEstudiante, h.proponer)
 	g.POST("/publicaciones/:id/comentarios", h.comentar)
-	g.PATCH("/propuestas/:id", soloEstudiante, h.decidir)
+	g.PATCH("/propuestas/:id", autores, h.decidir)
+	g.POST("/retos", soloEmpresa, h.crearReto)
 }
 
+// listar: GET /publicaciones?q=goroutine&lenguaje=go&institucion=uts&estado=abierta&tipo=reto&pagina=2
 func (h *PublicacionHandler) listar(c *gin.Context) {
-	pagina, _ := strconv.Atoi(c.DefaultQuery("pagina", "1"))
-	lista, err := h.svc.Listar(c.Request.Context(), c.Query("lenguaje"), pagina)
+	var f model.FiltroPublicaciones
+	if err := c.ShouldBindQuery(&f); err != nil {
+		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "revisa los filtros de búsqueda")
+		return
+	}
+	lista, err := h.svc.Listar(c.Request.Context(), f)
 	if err != nil {
 		errorInterno(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"publicaciones": lista, "pagina": max(pagina, 1)})
+	c.JSON(http.StatusOK, gin.H{"publicaciones": lista, "pagina": max(f.Pagina, 1)})
+}
+
+func (h *PublicacionHandler) crearReto(c *gin.Context) {
+	var in model.NuevoRetoInput
+	if err := leerJSON(c, &in); err != nil {
+		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "revisa el título, la descripción (mínimo 20 caracteres) y la fecha límite")
+		return
+	}
+	p, err := h.svc.CrearReto(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), in)
+	if err != nil {
+		h.fallo(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"publicacion": p})
 }
 
 func (h *PublicacionHandler) crear(c *gin.Context) {
@@ -99,7 +121,7 @@ func (h *PublicacionHandler) decidir(c *gin.Context) {
 		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "el estado debe ser aceptada o rechazada")
 		return
 	}
-	if err := h.svc.Decidir(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), id, in.Estado); err != nil {
+	if err := h.svc.Decidir(c.Request.Context(), c.GetString(middleware.ClaveUsuarioID), c.GetString(middleware.ClaveRol), id, in.Estado); err != nil {
 		h.fallo(c, err)
 		return
 	}
@@ -135,6 +157,12 @@ func (h *PublicacionHandler) fallo(c *gin.Context, err error) {
 		responderError(c, http.StatusForbidden, "NO_ES_AUTOR", err.Error())
 	case errors.Is(err, service.ErrYaDecidida):
 		responderError(c, http.StatusConflict, "YA_DECIDIDA", err.Error())
+	case errors.Is(err, service.ErrRequiereSuscripcion):
+		responderError(c, http.StatusForbidden, "SUSCRIPCION_REQUERIDA", err.Error())
+	case errors.Is(err, service.ErrRetoCerrado):
+		responderError(c, http.StatusConflict, "RETO_CERRADO", err.Error())
+	case errors.Is(err, service.ErrFechaLimiteReto):
+		responderError(c, http.StatusBadRequest, "FECHA_INVALIDA", err.Error())
 	default:
 		errorInterno(c, err)
 	}

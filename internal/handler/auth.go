@@ -48,6 +48,10 @@ func (h *AuthHandler) registro(c *gin.Context) {
 		return
 	}
 	sesion, err := h.auth.Registrar(c.Request.Context(), in)
+	if errors.Is(err, service.ErrTerminosNoAceptados) {
+		responderError(c, http.StatusBadRequest, "TERMINOS_NO_ACEPTADOS", err.Error())
+		return
+	}
 	if errors.Is(err, service.ErrCorreoEnUso) {
 		responderError(c, http.StatusConflict, "CORREO_EN_USO", err.Error())
 		return

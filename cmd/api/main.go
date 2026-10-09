@@ -42,12 +42,13 @@ func main() {
 	authHandler := handler.NuevoAuthHandler(authService)
 	requiereAuth := middleware.RequiereAuth(authService)
 
+	suscripciones := repository.NuevoSuscripcionRepo(pool)
+
 	publicaciones := repository.NuevoPublicacionRepo(pool)
-	pubService := service.NuevoPublicacionService(publicaciones)
+	pubService := service.NuevoPublicacionService(publicaciones, suscripciones)
 	pubHandler := handler.NuevoPublicacionHandler(pubService)
 
 	estudiantes := repository.NuevoEstudianteRepo(pool)
-	suscripciones := repository.NuevoSuscripcionRepo(pool)
 	estService := service.NuevoEstudianteService(estudiantes, suscripciones)
 	estHandler := handler.NuevoEstudianteHandler(estService)
 

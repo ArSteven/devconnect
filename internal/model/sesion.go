@@ -3,14 +3,16 @@ package model
 import "time"
 
 type SesionVivo struct {
-	ID              string    `json:"id"`
-	AnfitrionID     string    `json:"anfitrion_id"`
-	AnfitrionNombre string    `json:"anfitrion_nombre"`
-	Titulo          string    `json:"titulo"`
-	Descripcion     string    `json:"descripcion"`
-	IniciaEn        time.Time `json:"inicia_en"`
-	Sala            string    `json:"sala"`
-	Estado          string    `json:"estado"`
+	ID              string     `json:"id"`
+	AnfitrionID     string     `json:"anfitrion_id"`
+	AnfitrionNombre string     `json:"anfitrion_nombre"`
+	AnfitrionGithub string     `json:"anfitrion_github"`
+	Titulo          string     `json:"titulo"`
+	Descripcion     string     `json:"descripcion"`
+	IniciaEn        time.Time  `json:"inicia_en"`
+	IniciadaEn      *time.Time `json:"iniciada_en"` // null si nunca pasó a en vivo
+	Sala            string     `json:"sala"`
+	Estado          string     `json:"estado"`
 }
 
 type NuevaSesionInput struct {

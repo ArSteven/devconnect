@@ -21,12 +21,16 @@ const (
 	DuracionRefresh = 7 * 24 * time.Hour
 	costoBcrypt     = 12
 	emisor          = "devconnect"
+	// VersionTerminos es la versión vigente de los términos y la política de datos.
+	// La define el servidor: el cliente solo dice si acepta, no qué versión.
+	VersionTerminos = "1.0"
 )
 
 var (
-	ErrCredenciales   = errors.New("correo o contraseña incorrectos")
-	ErrCorreoEnUso    = errors.New("ese correo ya está registrado")
-	ErrSesionInvalida = errors.New("sesión inválida o vencida")
+	ErrCredenciales        = errors.New("correo o contraseña incorrectos")
+	ErrCorreoEnUso         = errors.New("ese correo ya está registrado")
+	ErrSesionInvalida      = errors.New("sesión inválida o vencida")
+	ErrTerminosNoAceptados = errors.New("debes aceptar los términos y condiciones y la política de tratamiento de datos")
 )
 
 // Claims es lo que viaja dentro del token de acceso: solo el ID (Subject) y el rol.
@@ -62,16 +66,22 @@ func normalizarCorreo(c string) string {
 	return strings.ToLower(strings.TrimSpace(c))
 }
 
+// Registrar exige la autorización previa y expresa de la Ley 1581 de 2012: sin ella
+// no se crea la cuenta. Se valida antes de bcrypt para no gastar CPU en una petición que se rechaza.
 func (s *AuthService) Registrar(ctx context.Context, in model.RegistroInput) (*Sesion, error) {
+	if !in.AceptaTerminos {
+		return nil, ErrTerminosNoAceptados
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Contrasena), costoBcrypt)
 	if err != nil {
 		return nil, err
 	}
 	u := &model.Usuario{
-		Correo:         normalizarCorreo(in.Correo),
-		Nombre:         strings.TrimSpace(in.Nombre),
-		HashContrasena: string(hash),
-		Rol:            in.Rol,
+		Correo:          normalizarCorreo(in.Correo),
+		Nombre:          strings.TrimSpace(in.Nombre),
+		HashContrasena:  string(hash),
+		Rol:             in.Rol,
+		VersionTerminos: VersionTerminos,
 	}
 	if err := s.usuarios.Crear(ctx, u, strings.TrimSpace(in.RazonSocial)); err != nil {
 		if errors.Is(err, repository.ErrCorreoDuplicado) {
