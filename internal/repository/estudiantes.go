@@ -118,17 +118,19 @@ func (r *EstudianteRepo) Habilidades(ctx context.Context, id string) ([]model.Ha
 }
 
 // Destacados: sus mejoras aceptadas más recientes, con el problema que resolvieron.
-// Los retos de empresas van primero: es lo que más pesa para un reclutador.
+// Los retos de empresas van primero y después las verificadas por ejecución: es lo que más pesa
+// para un reclutador.
 func (r *EstudianteRepo) Destacados(ctx context.Context, id string) ([]model.Destacado, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT pm.id::text, p.id::text, p.titulo, p.lenguaje, COALESCE(e.razon_social, ua.nombre),
-		       p.tipo = 'reto', pm.explicacion, pm.actualizado_en
+		       p.tipo = 'reto', pm.explicacion, pm.actualizado_en, pm.verificada_en IS NOT NULL,
+		       EXISTS (SELECT 1 FROM defensas d WHERE d.propuesta_id = pm.id AND d.aprobada)
 		  FROM propuestas_mejora pm
 		  JOIN publicaciones p ON p.id = pm.publicacion_id
 		  JOIN usuarios ua ON ua.id = p.autor_id
 		  LEFT JOIN empresas e ON e.usuario_id = p.autor_id
 		 WHERE pm.autor_id = $1 AND pm.estado = 'aceptada'
-		 ORDER BY (p.tipo = 'reto') DESC, pm.actualizado_en DESC
+		 ORDER BY (p.tipo = 'reto') DESC, (pm.verificada_en IS NOT NULL) DESC, pm.actualizado_en DESC
 		 LIMIT 4`, id)
 	if err != nil {
 		return nil, err
@@ -137,7 +139,8 @@ func (r *EstudianteRepo) Destacados(ctx context.Context, id string) ([]model.Des
 	lista := []model.Destacado{}
 	for rows.Next() {
 		var d model.Destacado
-		if err := rows.Scan(&d.PropuestaID, &d.PublicacionID, &d.Titulo, &d.Lenguaje, &d.AutorOriginal, &d.EsReto, &d.Explicacion, &d.Fecha); err != nil {
+		if err := rows.Scan(&d.PropuestaID, &d.PublicacionID, &d.Titulo, &d.Lenguaje, &d.AutorOriginal, &d.EsReto, &d.Explicacion, &d.Fecha,
+			&d.Verificada, &d.DefensaAprobada); err != nil {
 			return nil, err
 		}
 		lista = append(lista, d)

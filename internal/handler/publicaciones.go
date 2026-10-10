@@ -30,13 +30,16 @@ func (h *PublicacionHandler) Rutas(g *gin.RouterGroup) {
 
 	g.GET("/publicaciones", h.listar)
 	g.GET("/actividad", h.actividad)
-	g.GET("/antes-y-despues", h.antesYDespues)
 	g.POST("/publicaciones", soloEstudiante, h.crear)
 	g.GET("/publicaciones/:id", h.detalle)
 	g.POST("/publicaciones/:id/propuestas", soloEstudiante, h.proponer)
 	g.POST("/publicaciones/:id/comentarios", h.comentar)
 	g.PATCH("/propuestas/:id", autores, h.decidir)
+	g.POST("/propuestas/:id/verificacion", h.verificar)
 	g.POST("/retos", soloEmpresa, h.crearReto)
+	g.POST("/propuestas/:id/defensa", soloEmpresa, h.invitarDefensa)
+	g.PATCH("/defensas/:id", soloEmpresa, h.cambiarDefensa)
+	g.GET("/defensas", h.defensas)
 }
 
 // listar: GET /publicaciones?q=goroutine&lenguaje=go&institucion=uts&estado=abierta&tipo=reto&pagina=2
@@ -67,21 +70,6 @@ func (h *PublicacionHandler) actividad(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"actividad": lista})
-}
-
-// antesYDespues: GET /antes-y-despues?pagina=2 — mejoras aceptadas para reproducir, de la más nueva a la más antigua.
-func (h *PublicacionHandler) antesYDespues(c *gin.Context) {
-	var f model.FiltroTransformaciones
-	if err := c.ShouldBindQuery(&f); err != nil {
-		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "la página debe ser un número entre 1 y 1000")
-		return
-	}
-	lista, err := h.svc.Transformaciones(c.Request.Context(), f.Pagina)
-	if err != nil {
-		errorInterno(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"transformaciones": lista, "pagina": max(f.Pagina, 1), "por_pagina": service.PorPaginaTransformaciones})
 }
 
 func (h *PublicacionHandler) crearReto(c *gin.Context) {
@@ -117,7 +105,7 @@ func (h *PublicacionHandler) detalle(c *gin.Context) {
 	if !ok {
 		return
 	}
-	d, err := h.svc.Detalle(c.Request.Context(), id)
+	d, err := h.svc.Detalle(c.Request.Context(), id, c.GetString(middleware.ClaveUsuarioID))
 	if err != nil {
 		h.fallo(c, err)
 		return
@@ -193,8 +181,28 @@ func (h *PublicacionHandler) fallo(c *gin.Context, err error) {
 		responderError(c, http.StatusForbidden, "SUSCRIPCION_REQUERIDA", err.Error())
 	case errors.Is(err, service.ErrRetoCerrado):
 		responderError(c, http.StatusConflict, "RETO_CERRADO", err.Error())
-	case errors.Is(err, service.ErrFechaLimiteReto):
+	case errors.Is(err, service.ErrFechaLimiteReto), errors.Is(err, service.ErrFechaDefensa):
 		responderError(c, http.StatusBadRequest, "FECHA_INVALIDA", err.Error())
+	case errors.Is(err, service.ErrExplicacionCorta):
+		responderError(c, http.StatusBadRequest, "EXPLICACION_CORTA", err.Error())
+	case errors.Is(err, service.ErrUsoIA):
+		responderError(c, http.StatusBadRequest, "USO_IA_REQUERIDO", err.Error())
+	case errors.Is(err, service.ErrNoAceptada):
+		responderError(c, http.StatusConflict, "NO_ACEPTADA", err.Error())
+	case errors.Is(err, service.ErrPropiaMejora):
+		responderError(c, http.StatusForbidden, "PROPIA_MEJORA", err.Error())
+	case errors.Is(err, service.ErrNoEjecutable):
+		responderError(c, http.StatusBadRequest, "NO_EJECUTABLE", err.Error())
+	case errors.Is(err, service.ErrNoEsReto):
+		responderError(c, http.StatusBadRequest, "NO_ES_RETO", err.Error())
+	case errors.Is(err, service.ErrNoEsTuReto):
+		responderError(c, http.StatusForbidden, "NO_ES_TU_RETO", err.Error())
+	case errors.Is(err, service.ErrSolucionRechazada):
+		responderError(c, http.StatusConflict, "SOLUCION_RECHAZADA", err.Error())
+	case errors.Is(err, service.ErrDefensaVigente):
+		responderError(c, http.StatusConflict, "DEFENSA_VIGENTE", err.Error())
+	case errors.Is(err, service.ErrTransicionDefensa):
+		responderError(c, http.StatusConflict, "TRANSICION_INVALIDA", err.Error())
 	default:
 		errorInterno(c, err)
 	}

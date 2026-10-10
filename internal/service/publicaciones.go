@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ArSteven/devconnect/internal/model"
 	"github.com/ArSteven/devconnect/internal/repository"
@@ -13,8 +14,8 @@ import (
 const (
 	porPagina    = 20
 	maxActividad = 20 // mejoras aceptadas que el feed intercala entre las publicaciones
-	// PorPaginaTransformaciones: cada una ocupa la pantalla y trae el código completo, así que van de a pocas.
-	PorPaginaTransformaciones = 6
+	// MinExplicacionReto: una solución de reto explica sus decisiones, no solo el resultado.
+	MinExplicacionReto = 100
 )
 
 var (
@@ -25,6 +26,8 @@ var (
 	ErrRequiereSuscripcion = errors.New("esta función requiere una suscripción de empresa activa")
 	ErrRetoCerrado         = errors.New("este reto ya cerró: la fecha límite pasó")
 	ErrFechaLimiteReto     = errors.New("la fecha límite debe estar entre una hora y 90 días desde ahora")
+	ErrExplicacionCorta    = errors.New("explica tus decisiones en al menos 100 caracteres: qué cambiaste, qué alternativas descartaste y qué harías con más tiempo")
+	ErrUsoIA               = errors.New("indica si usaste inteligencia artificial para resolver el reto")
 )
 
 type PublicacionService struct {
@@ -97,27 +100,6 @@ func (s *PublicacionService) Actividad(ctx context.Context, f model.FiltroActivi
 	return lista, nil
 }
 
-// Transformaciones devuelve una página de mejoras aceptadas para «Antes y después», con los dos códigos completos.
-func (s *PublicacionService) Transformaciones(ctx context.Context, pagina int) ([]model.Transformacion, error) {
-	if pagina < 1 {
-		pagina = 1
-	}
-	mejoras, err := s.repo.UltimaMejoraPorPublicacion(ctx, PorPaginaTransformaciones, (pagina-1)*PorPaginaTransformaciones)
-	if err != nil {
-		return nil, err
-	}
-	lista := make([]model.Transformacion, len(mejoras))
-	for i, m := range mejoras {
-		lista[i] = model.Transformacion{
-			PropuestaID: m.PropuestaID, PublicacionID: m.PublicacionID,
-			Titulo: m.Titulo, Lenguaje: m.Lenguaje, Tipo: m.Tipo,
-			Autor: m.AutorPublicacion, Contribuyente: m.Contribuyente,
-			Original: m.Original, Codigo: m.Codigo, Explicacion: m.Explicacion, AceptadaEn: m.AceptadaEn,
-		}
-	}
-	return lista, nil
-}
-
 func (s *PublicacionService) Crear(ctx context.Context, autorID string, in model.NuevaPublicacionInput) (*model.Publicacion, error) {
 	p := &model.Publicacion{
 		AutorID:     autorID,
@@ -159,7 +141,9 @@ func (s *PublicacionService) CrearReto(ctx context.Context, empresaID string, in
 	return p, nil
 }
 
-func (s *PublicacionService) Detalle(ctx context.Context, id string) (*model.DetallePublicacion, error) {
+// Detalle: la declaración de uso de IA y la defensa en vivo de una solución solo las ven la empresa
+// dueña del reto y quien envió la solución.
+func (s *PublicacionService) Detalle(ctx context.Context, id, visitanteID string) (*model.DetallePublicacion, error) {
 	p, err := s.repo.Obtener(ctx, id)
 	if errors.Is(err, repository.ErrNoEncontrado) {
 		return nil, ErrNoEncontrada
@@ -171,6 +155,26 @@ func (s *PublicacionService) Detalle(ctx context.Context, id string) (*model.Det
 	if err != nil {
 		return nil, err
 	}
+	defensas := map[string]model.Defensa{}
+	if p.Tipo == "reto" {
+		lista, err := s.repo.DefensasVigentes(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range lista {
+			defensas[d.PropuestaID] = d
+		}
+	}
+	for i := range propuestas {
+		pr := &propuestas[i]
+		if visitanteID != p.AutorID && visitanteID != pr.AutorID {
+			pr.UsoIA, pr.UsoIADetalle = "", ""
+			continue
+		}
+		if d, ok := defensas[pr.ID]; ok {
+			pr.Defensa = &d
+		}
+	}
 	comentarios, err := s.repo.ListarComentarios(ctx, id)
 	if err != nil {
 		return nil, err
@@ -179,7 +183,8 @@ func (s *PublicacionService) Detalle(ctx context.Context, id string) (*model.Det
 }
 
 // Proponer: cualquier estudiante puede proponer una mejora, excepto el autor.
-// En un reto, solo mientras no haya pasado la fecha límite.
+// En un reto, solo mientras no haya pasado la fecha límite, explicando sus decisiones en al menos
+// 100 caracteres y declarando si usó inteligencia artificial.
 func (s *PublicacionService) Proponer(ctx context.Context, autorID, publicacionID string, in model.NuevaPropuestaInput) (*model.Propuesta, error) {
 	pub, err := s.repo.Obtener(ctx, publicacionID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
@@ -199,6 +204,15 @@ func (s *PublicacionService) Proponer(ctx context.Context, autorID, publicacionI
 		AutorID:       autorID,
 		Codigo:        in.Codigo,
 		Explicacion:   strings.TrimSpace(in.Explicacion),
+	}
+	if pub.Tipo == "reto" {
+		if utf8.RuneCountInString(p.Explicacion) < MinExplicacionReto {
+			return nil, ErrExplicacionCorta
+		}
+		if in.UsoIA == "" {
+			return nil, ErrUsoIA
+		}
+		p.UsoIA, p.UsoIADetalle = in.UsoIA, strings.TrimSpace(in.UsoIADetalle)
 	}
 	if err := s.repo.CrearPropuesta(ctx, p); err != nil {
 		return nil, err

@@ -59,28 +59,6 @@ type MejoraCompleta struct {
 	AceptadaEn       time.Time
 	Original         string
 	Codigo           string
-	Explicacion      string
-}
-
-// Transformacion es una mejora aceptada para la sección «Antes y después»: el código original
-// se transforma en el mejorado frente a quien mira.
-type Transformacion struct {
-	PropuestaID   string    `json:"propuesta_id"`
-	PublicacionID string    `json:"publicacion_id"`
-	Titulo        string    `json:"titulo"`
-	Lenguaje      string    `json:"lenguaje"`
-	Tipo          string    `json:"tipo"`
-	Autor         Persona   `json:"autor"`         // autor de la publicación (en un reto, la empresa)
-	Contribuyente Persona   `json:"contribuyente"` // quien hizo la mejora
-	Original      string    `json:"original"`
-	Codigo        string    `json:"codigo"`
-	Explicacion   string    `json:"explicacion"`
-	AceptadaEn    time.Time `json:"aceptada_en"`
-}
-
-// FiltroTransformaciones son los parámetros de GET /antes-y-despues.
-type FiltroTransformaciones struct {
-	Pagina int `form:"pagina" binding:"omitempty,min=1,max=1000"`
 }
 
 // Actividad es una mejora aceptada contada en el feed: quién mejoró el código de quién.
@@ -97,15 +75,20 @@ type Actividad struct {
 }
 
 type Propuesta struct {
-	ID            string    `json:"id"`
-	PublicacionID string    `json:"publicacion_id"`
-	AutorID       string    `json:"autor_id"`
-	AutorNombre   string    `json:"autor_nombre"`
-	AutorGithub   string    `json:"autor_github"`
-	Codigo        string    `json:"codigo"`
-	Explicacion   string    `json:"explicacion"`
-	Estado        string    `json:"estado"`
-	CreadoEn      time.Time `json:"creado_en"`
+	ID            string     `json:"id"`
+	PublicacionID string     `json:"publicacion_id"`
+	AutorID       string     `json:"autor_id"`
+	AutorNombre   string     `json:"autor_nombre"`
+	AutorGithub   string     `json:"autor_github"`
+	Codigo        string     `json:"codigo"`
+	Explicacion   string     `json:"explicacion"`
+	Estado        string     `json:"estado"`
+	CreadoEn      time.Time  `json:"creado_en"`
+	VerificadaEn  *time.Time `json:"verificada_en"` // «Pruébalo»: otra persona la ejecutó y cambió el resultado
+	// Solo en soluciones de retos, y solo las ven la empresa dueña del reto y quien envió la solución.
+	UsoIA        string   `json:"uso_ia,omitempty"` // no, consulta o codigo
+	UsoIADetalle string   `json:"uso_ia_detalle,omitempty"`
+	Defensa      *Defensa `json:"defensa,omitempty"` // la defensa en vivo vigente, si la hay
 }
 
 type Comentario struct {
@@ -125,12 +108,14 @@ type DetallePublicacion struct {
 	ListaComentarios []Comentario `json:"comentarios"`
 }
 
-// PropuestaInfo reúne lo necesario para decidir sobre una propuesta.
+// PropuestaInfo reúne lo necesario para decidir sobre una propuesta, verificarla o citar a su autor.
 type PropuestaInfo struct {
 	Estado           string
 	PublicacionID    string
 	AutorPublicacion string
 	TipoPublicacion  string
+	AutorPropuesta   string
+	Lenguaje         string
 }
 
 // FiltroPublicaciones son los parámetros de GET /publicaciones. Todos se combinan.
@@ -166,9 +151,13 @@ type NuevoRetoInput struct {
 	FechaLimite time.Time `json:"fecha_limite" binding:"required"`
 }
 
+// NuevaPropuestaInput: en un reto, el service exige además la declaración de uso de IA y una
+// explicación de al menos 100 caracteres.
 type NuevaPropuestaInput struct {
-	Codigo      string `json:"codigo" binding:"required,max=20000"`
-	Explicacion string `json:"explicacion" binding:"required,min=10,max=2000"`
+	Codigo       string `json:"codigo" binding:"required,max=20000"`
+	Explicacion  string `json:"explicacion" binding:"required,min=10,max=2000"`
+	UsoIA        string `json:"uso_ia" binding:"omitempty,oneof=no consulta codigo"`
+	UsoIADetalle string `json:"uso_ia_detalle" binding:"max=500"`
 }
 
 type DecisionInput struct {

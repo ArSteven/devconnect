@@ -55,14 +55,16 @@ type Habilidad struct {
 
 // Destacado: una mejora suya que otra persona aceptó. Si EsReto, AutorOriginal es la empresa.
 type Destacado struct {
-	PropuestaID   string    `json:"propuesta_id"`
-	PublicacionID string    `json:"publicacion_id"`
-	Titulo        string    `json:"titulo"`
-	Lenguaje      string    `json:"lenguaje"`
-	AutorOriginal string    `json:"autor_original"`
-	EsReto        bool      `json:"es_reto"`
-	Explicacion   string    `json:"explicacion"`
-	Fecha         time.Time `json:"fecha"`
+	PropuestaID     string    `json:"propuesta_id"`
+	PublicacionID   string    `json:"publicacion_id"`
+	Titulo          string    `json:"titulo"`
+	Lenguaje        string    `json:"lenguaje"`
+	AutorOriginal   string    `json:"autor_original"`
+	EsReto          bool      `json:"es_reto"`
+	Explicacion     string    `json:"explicacion"`
+	Fecha           time.Time `json:"fecha"`
+	Verificada      bool      `json:"verificada"`       // «Mejora verificada por ejecución»
+	DefensaAprobada bool      `json:"defensa_aprobada"` // la empresa del reto aprobó su defensa en vivo
 }
 
 type DiaActividad struct {

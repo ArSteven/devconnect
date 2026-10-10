@@ -116,7 +116,8 @@ func (r *PublicacionRepo) Crear(ctx context.Context, p *model.Publicacion) error
 func (r *PublicacionRepo) ListarPropuestas(ctx context.Context, publicacionID string) ([]model.Propuesta, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT pm.id::text, pm.publicacion_id::text, pm.autor_id::text, u.nombre, COALESCE(pe.github_url, ''),
-		        pm.codigo, pm.explicacion, pm.estado, pm.creado_en
+		        pm.codigo, pm.explicacion, pm.estado, pm.creado_en, pm.verificada_en,
+		        COALESCE(pm.uso_ia, ''), COALESCE(pm.uso_ia_detalle, '')
 		   FROM propuestas_mejora pm
 		   JOIN usuarios u ON u.id = pm.autor_id
 		   LEFT JOIN perfiles_estudiante pe ON pe.usuario_id = pm.autor_id
@@ -131,7 +132,7 @@ func (r *PublicacionRepo) ListarPropuestas(ctx context.Context, publicacionID st
 	for rows.Next() {
 		var p model.Propuesta
 		if err := rows.Scan(&p.ID, &p.PublicacionID, &p.AutorID, &p.AutorNombre, &p.AutorGithub,
-			&p.Codigo, &p.Explicacion, &p.Estado, &p.CreadoEn); err != nil {
+			&p.Codigo, &p.Explicacion, &p.Estado, &p.CreadoEn, &p.VerificadaEn, &p.UsoIA, &p.UsoIADetalle); err != nil {
 			return nil, err
 		}
 		lista = append(lista, p)
@@ -167,21 +168,21 @@ func (r *PublicacionRepo) ListarComentarios(ctx context.Context, publicacionID s
 
 func (r *PublicacionRepo) CrearPropuesta(ctx context.Context, p *model.Propuesta) error {
 	return r.db.QueryRow(ctx,
-		`INSERT INTO propuestas_mejora (publicacion_id, autor_id, codigo, explicacion)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO propuestas_mejora (publicacion_id, autor_id, codigo, explicacion, uso_ia, uso_ia_detalle)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''))
 		 RETURNING id::text, estado, creado_en`,
-		p.PublicacionID, p.AutorID, p.Codigo, p.Explicacion,
+		p.PublicacionID, p.AutorID, p.Codigo, p.Explicacion, p.UsoIA, p.UsoIADetalle,
 	).Scan(&p.ID, &p.Estado, &p.CreadoEn)
 }
 
 func (r *PublicacionRepo) InfoPropuesta(ctx context.Context, propuestaID string) (*model.PropuestaInfo, error) {
 	var i model.PropuestaInfo
 	err := r.db.QueryRow(ctx,
-		`SELECT pm.estado, pm.publicacion_id::text, p.autor_id::text, p.tipo
+		`SELECT pm.estado, pm.publicacion_id::text, p.autor_id::text, p.tipo, pm.autor_id::text, p.lenguaje
 		   FROM propuestas_mejora pm
 		   JOIN publicaciones p ON p.id = pm.publicacion_id
 		  WHERE pm.id = $1`, propuestaID,
-	).Scan(&i.Estado, &i.PublicacionID, &i.AutorPublicacion, &i.TipoPublicacion)
+	).Scan(&i.Estado, &i.PublicacionID, &i.AutorPublicacion, &i.TipoPublicacion, &i.AutorPropuesta, &i.Lenguaje)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoEncontrado
 	}
@@ -225,22 +226,13 @@ func (r *PublicacionRepo) Decidir(ctx context.Context, propuestaID, estado strin
 	return tx.Commit(ctx)
 }
 
-// Fuentes de propuestas para selectMejora: siempre texto fijo del código, nunca datos del usuario.
-const (
-	todasLasPropuestas = `propuestas_mejora`
-	// ultimaAceptada deja, por publicación, solo su mejora aceptada más reciente.
-	ultimaAceptada = `(SELECT DISTINCT ON (publicacion_id) * FROM propuestas_mejora
-	                    WHERE estado = 'aceptada' ORDER BY publicacion_id, actualizado_en DESC)`
-)
-
-// selectMejora trae mejoras aceptadas con los dos códigos completos y la explicación.
-func selectMejora(fuente string) string {
-	return `
+// selectMejora trae mejoras aceptadas con los dos códigos completos.
+const selectMejora = `
 SELECT pm.id::text, p.id::text, p.titulo, p.lenguaje, p.tipo,
        ua.id::text, COALESCE(e.razon_social, ua.nombre), COALESCE(pea.github_url, ''),
        uc.id::text, uc.nombre, COALESCE(pec.github_url, ''),
-       pm.actualizado_en, p.codigo, pm.codigo, pm.explicacion
-  FROM ` + fuente + ` pm
+       pm.actualizado_en, p.codigo, pm.codigo
+  FROM propuestas_mejora pm
   JOIN publicaciones p ON p.id = pm.publicacion_id
   JOIN usuarios ua ON ua.id = p.autor_id
   LEFT JOIN perfiles_estudiante pea ON pea.usuario_id = p.autor_id
@@ -248,11 +240,10 @@ SELECT pm.id::text, p.id::text, p.titulo, p.lenguaje, p.tipo,
   JOIN usuarios uc ON uc.id = pm.autor_id
   LEFT JOIN perfiles_estudiante pec ON pec.usuario_id = pm.autor_id
  WHERE pm.estado = 'aceptada' `
-}
 
 // MejorasAceptadas devuelve las mejoras aceptadas de esas publicaciones, la más reciente primero.
 func (r *PublicacionRepo) MejorasAceptadas(ctx context.Context, publicacionIDs []string) ([]model.MejoraCompleta, error) {
-	return r.mejoras(ctx, selectMejora(todasLasPropuestas)+`
+	return r.mejoras(ctx, selectMejora+`
 		   AND pm.publicacion_id = ANY($1::text[]::uuid[])
 		 ORDER BY pm.actualizado_en DESC`, publicacionIDs)
 }
@@ -260,20 +251,12 @@ func (r *PublicacionRepo) MejorasAceptadas(ctx context.Context, publicacionIDs [
 // MejorasRecientes son las últimas mejoras aceptadas (la actividad del feed), con los
 // filtros del feed que aplican. Institucion llega ya en minúsculas y sin tildes.
 func (r *PublicacionRepo) MejorasRecientes(ctx context.Context, f model.FiltroActividad, limite int) ([]model.MejoraCompleta, error) {
-	return r.mejoras(ctx, selectMejora(todasLasPropuestas)+`
+	return r.mejoras(ctx, selectMejora+`
 		   AND ($1 = '' OR p.lenguaje = $1)
 		   AND ($2 = '' OR p.tipo = $2)
 		   AND ($3 = '' OR `+sinTildes("COALESCE(pea.institucion, '')")+` = $3)
 		 ORDER BY pm.actualizado_en DESC
 		 LIMIT $4`, f.Lenguaje, f.Tipo, f.Institucion, limite)
-}
-
-// UltimaMejoraPorPublicacion: las publicaciones con al menos una mejora aceptada, cada una con
-// la más reciente, de la mejora más nueva a la más antigua (la sección «Antes y después»).
-func (r *PublicacionRepo) UltimaMejoraPorPublicacion(ctx context.Context, limite, offset int) ([]model.MejoraCompleta, error) {
-	return r.mejoras(ctx, selectMejora(ultimaAceptada)+`
-		 ORDER BY pm.actualizado_en DESC, pm.id
-		 LIMIT $1 OFFSET $2`, limite, offset)
 }
 
 func (r *PublicacionRepo) mejoras(ctx context.Context, sql string, args ...any) ([]model.MejoraCompleta, error) {
@@ -289,7 +272,7 @@ func (r *PublicacionRepo) mejoras(ctx context.Context, sql string, args ...any) 
 		if err := rows.Scan(&m.PropuestaID, &m.PublicacionID, &m.Titulo, &m.Lenguaje, &m.Tipo,
 			&m.AutorPublicacion.ID, &m.AutorPublicacion.Nombre, &m.AutorPublicacion.GithubURL,
 			&m.Contribuyente.ID, &m.Contribuyente.Nombre, &m.Contribuyente.GithubURL,
-			&m.AceptadaEn, &m.Original, &m.Codigo, &m.Explicacion); err != nil {
+			&m.AceptadaEn, &m.Original, &m.Codigo); err != nil {
 			return nil, err
 		}
 		lista = append(lista, m)

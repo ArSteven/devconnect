@@ -57,6 +57,7 @@ func main() {
 	sesHandler := handler.NuevoSesionHandler(service.NuevoSesionService(sesiones))
 
 	metHandler := handler.NuevoMetricasHandler(service.NuevoMetricasService(repository.NuevoMetricaRepo(pool)))
+	ejeHandler := handler.NuevoEjecucionHandler(service.NuevoEjecucionService(service.URLGoPlayground))
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
@@ -85,6 +86,7 @@ func main() {
 	estHandler.Rutas(privado)
 	sesHandler.Rutas(privado)
 	metHandler.Rutas(privado)
+	ejeHandler.Rutas(privado)
 
 	log.Printf("API escuchando en :%s (%s)", cfg.Puerto, cfg.Entorno)
 	if err := r.Run(":" + cfg.Puerto); err != nil {
