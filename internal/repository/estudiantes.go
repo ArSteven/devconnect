@@ -79,10 +79,12 @@ func (r *EstudianteRepo) Totales(ctx context.Context, id string) (model.TotalesP
 		      UNION
 		      SELECT pm.autor_id FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
 		       WHERE p.autor_id = $1 AND pm.estado = 'aceptada') c),
+		   (SELECT count(DISTINCT p.autor_id) FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
+		     WHERE pm.autor_id = $1 AND pm.estado = 'aceptada' AND p.tipo = 'pregunta'),
 		   (SELECT count(*) FROM sesiones_vivo WHERE anfitrion_id = $1 AND iniciada_en IS NOT NULL),
 		   (SELECT count(DISTINCT pm.publicacion_id) FROM propuestas_mejora pm JOIN publicaciones p ON p.id = pm.publicacion_id
 		     WHERE pm.autor_id = $1 AND pm.estado = 'aceptada' AND p.tipo = 'reto')`, id,
-	).Scan(&t.Publicaciones, &t.PropuestasHechas, &t.MejorasAportadas, &t.MejorasRecibidas, &t.Colaboradores, &t.Sesiones, &t.RetosResueltos)
+	).Scan(&t.Publicaciones, &t.PropuestasHechas, &t.MejorasAportadas, &t.MejorasRecibidas, &t.Colaboradores, &t.PersonasAyudadas, &t.Sesiones, &t.RetosResueltos)
 	return t, err
 }
 

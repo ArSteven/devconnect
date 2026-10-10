@@ -23,6 +23,18 @@ const (
 	codigoRecortado = `array_to_string((string_to_array(p.codigo, E'\n'))[1:12], E'\n')`
 )
 
+// proponentes: las primeras cuatro personas que propusieron una mejora, para los avatares del feed.
+const proponentes = `COALESCE((
+       SELECT json_agg(json_build_object('id', x.id, 'nombre', x.nombre, 'github_url', x.github_url) ORDER BY x.primera)
+         FROM (SELECT uq.id::text AS id, uq.nombre, COALESCE(pq.github_url, '') AS github_url, min(pm.creado_en) AS primera
+                 FROM propuestas_mejora pm
+                 JOIN usuarios uq ON uq.id = pm.autor_id
+                 LEFT JOIN perfiles_estudiante pq ON pq.usuario_id = pm.autor_id
+                WHERE pm.publicacion_id = p.id
+                GROUP BY uq.id, pq.usuario_id
+                ORDER BY primera
+                LIMIT 4) x), '[]')`
+
 // selectPublicacion arma el SELECT común. En un reto el autor es una empresa:
 // se muestra su razón social. codigo es siempre una de las constantes de arriba.
 func selectPublicacion(codigo string) string {
@@ -30,10 +42,12 @@ func selectPublicacion(codigo string) string {
 SELECT p.id::text, p.autor_id::text, COALESCE(e.razon_social, u.nombre),
        COALESCE(pe.institucion, ''), COALESCE(pe.github_url, ''),
        p.titulo, COALESCE(p.descripcion, ''), p.lenguaje, ` + codigo + `,
-       COALESCE(array_length(string_to_array(p.codigo, E'\n'), 1), 0),
+       COALESCE(array_length(string_to_array(rtrim(p.codigo, E'\r\n'), E'\n'), 1), 0),
        p.estado, p.tipo, p.fecha_limite, p.creado_en,
        (SELECT count(*) FROM propuestas_mejora pm WHERE pm.publicacion_id = p.id),
-       (SELECT count(*) FROM comentarios c WHERE c.publicacion_id = p.id)
+       (SELECT count(*) FROM comentarios c WHERE c.publicacion_id = p.id),
+       (SELECT count(DISTINCT pm.autor_id) FROM propuestas_mejora pm WHERE pm.publicacion_id = p.id),
+       ` + proponentes + `
   FROM publicaciones p
   JOIN usuarios u ON u.id = p.autor_id
   LEFT JOIN perfiles_estudiante pe ON pe.usuario_id = p.autor_id
@@ -44,7 +58,8 @@ func escanearPublicacion(row pgx.Row) (model.Publicacion, error) {
 	var p model.Publicacion
 	err := row.Scan(&p.ID, &p.AutorID, &p.AutorNombre, &p.AutorInstitucion, &p.AutorGithub,
 		&p.Titulo, &p.Descripcion, &p.Lenguaje, &p.Codigo, &p.TotalLineas,
-		&p.Estado, &p.Tipo, &p.FechaLimite, &p.CreadoEn, &p.Propuestas, &p.Comentarios)
+		&p.Estado, &p.Tipo, &p.FechaLimite, &p.CreadoEn, &p.Propuestas, &p.Comentarios,
+		&p.TotalProponentes, &p.Proponentes)
 	return p, err
 }
 
@@ -208,6 +223,78 @@ func (r *PublicacionRepo) Decidir(ctx context.Context, propuestaID, estado strin
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// Fuentes de propuestas para selectMejora: siempre texto fijo del código, nunca datos del usuario.
+const (
+	todasLasPropuestas = `propuestas_mejora`
+	// ultimaAceptada deja, por publicación, solo su mejora aceptada más reciente.
+	ultimaAceptada = `(SELECT DISTINCT ON (publicacion_id) * FROM propuestas_mejora
+	                    WHERE estado = 'aceptada' ORDER BY publicacion_id, actualizado_en DESC)`
+)
+
+// selectMejora trae mejoras aceptadas con los dos códigos completos y la explicación.
+func selectMejora(fuente string) string {
+	return `
+SELECT pm.id::text, p.id::text, p.titulo, p.lenguaje, p.tipo,
+       ua.id::text, COALESCE(e.razon_social, ua.nombre), COALESCE(pea.github_url, ''),
+       uc.id::text, uc.nombre, COALESCE(pec.github_url, ''),
+       pm.actualizado_en, p.codigo, pm.codigo, pm.explicacion
+  FROM ` + fuente + ` pm
+  JOIN publicaciones p ON p.id = pm.publicacion_id
+  JOIN usuarios ua ON ua.id = p.autor_id
+  LEFT JOIN perfiles_estudiante pea ON pea.usuario_id = p.autor_id
+  LEFT JOIN empresas e ON e.usuario_id = p.autor_id
+  JOIN usuarios uc ON uc.id = pm.autor_id
+  LEFT JOIN perfiles_estudiante pec ON pec.usuario_id = pm.autor_id
+ WHERE pm.estado = 'aceptada' `
+}
+
+// MejorasAceptadas devuelve las mejoras aceptadas de esas publicaciones, la más reciente primero.
+func (r *PublicacionRepo) MejorasAceptadas(ctx context.Context, publicacionIDs []string) ([]model.MejoraCompleta, error) {
+	return r.mejoras(ctx, selectMejora(todasLasPropuestas)+`
+		   AND pm.publicacion_id = ANY($1::text[]::uuid[])
+		 ORDER BY pm.actualizado_en DESC`, publicacionIDs)
+}
+
+// MejorasRecientes son las últimas mejoras aceptadas (la actividad del feed), con los
+// filtros del feed que aplican. Institucion llega ya en minúsculas y sin tildes.
+func (r *PublicacionRepo) MejorasRecientes(ctx context.Context, f model.FiltroActividad, limite int) ([]model.MejoraCompleta, error) {
+	return r.mejoras(ctx, selectMejora(todasLasPropuestas)+`
+		   AND ($1 = '' OR p.lenguaje = $1)
+		   AND ($2 = '' OR p.tipo = $2)
+		   AND ($3 = '' OR `+sinTildes("COALESCE(pea.institucion, '')")+` = $3)
+		 ORDER BY pm.actualizado_en DESC
+		 LIMIT $4`, f.Lenguaje, f.Tipo, f.Institucion, limite)
+}
+
+// UltimaMejoraPorPublicacion: las publicaciones con al menos una mejora aceptada, cada una con
+// la más reciente, de la mejora más nueva a la más antigua (la sección «Antes y después»).
+func (r *PublicacionRepo) UltimaMejoraPorPublicacion(ctx context.Context, limite, offset int) ([]model.MejoraCompleta, error) {
+	return r.mejoras(ctx, selectMejora(ultimaAceptada)+`
+		 ORDER BY pm.actualizado_en DESC, pm.id
+		 LIMIT $1 OFFSET $2`, limite, offset)
+}
+
+func (r *PublicacionRepo) mejoras(ctx context.Context, sql string, args ...any) ([]model.MejoraCompleta, error) {
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lista := []model.MejoraCompleta{}
+	for rows.Next() {
+		var m model.MejoraCompleta
+		if err := rows.Scan(&m.PropuestaID, &m.PublicacionID, &m.Titulo, &m.Lenguaje, &m.Tipo,
+			&m.AutorPublicacion.ID, &m.AutorPublicacion.Nombre, &m.AutorPublicacion.GithubURL,
+			&m.Contribuyente.ID, &m.Contribuyente.Nombre, &m.Contribuyente.GithubURL,
+			&m.AceptadaEn, &m.Original, &m.Codigo, &m.Explicacion); err != nil {
+			return nil, err
+		}
+		lista = append(lista, m)
+	}
+	return lista, rows.Err()
 }
 
 func (r *PublicacionRepo) CrearComentario(ctx context.Context, publicacionID string, c *model.Comentario) error {

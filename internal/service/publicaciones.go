@@ -10,7 +10,12 @@ import (
 	"github.com/ArSteven/devconnect/internal/repository"
 )
 
-const porPagina = 20
+const (
+	porPagina    = 20
+	maxActividad = 20 // mejoras aceptadas que el feed intercala entre las publicaciones
+	// PorPaginaTransformaciones: cada una ocupa la pantalla y trae el código completo, así que van de a pocas.
+	PorPaginaTransformaciones = 6
+)
 
 var (
 	ErrNoEncontrada        = errors.New("no existe")
@@ -38,7 +43,79 @@ func (s *PublicacionService) Listar(ctx context.Context, f model.FiltroPublicaci
 	}
 	f.Q = normalizarTexto(f.Q)
 	f.Institucion = normalizarTexto(f.Institucion)
-	return s.repo.Listar(ctx, f, porPagina, (f.Pagina-1)*porPagina)
+	lista, err := s.repo.Listar(ctx, f, porPagina, (f.Pagina-1)*porPagina)
+	if err != nil || len(lista) == 0 {
+		return lista, err
+	}
+	if err := s.agregarMejoras(ctx, lista); err != nil {
+		return nil, err
+	}
+	return lista, nil
+}
+
+// agregarMejoras pone en cada publicación mejorada su mejora aceptada más reciente,
+// recortada a lo que muestra la tarjeta del feed.
+func (s *PublicacionService) agregarMejoras(ctx context.Context, lista []model.Publicacion) error {
+	ids := make([]string, len(lista))
+	for i, p := range lista {
+		ids[i] = p.ID
+	}
+	mejoras, err := s.repo.MejorasAceptadas(ctx, ids)
+	if err != nil {
+		return err
+	}
+	ultima := map[string]model.MejoraCompleta{}
+	for _, m := range mejoras { // llegan de la más reciente a la más antigua
+		if _, ya := ultima[m.PublicacionID]; !ya {
+			ultima[m.PublicacionID] = m
+		}
+	}
+	for i := range lista {
+		if m, ok := ultima[lista[i].ID]; ok {
+			lista[i].Mejora = &model.MejoraAceptada{Autor: m.Contribuyente, Ventana: ventanaTarjeta(m.Original, m.Codigo)}
+		}
+	}
+	return nil
+}
+
+// Actividad devuelve las últimas mejoras aceptadas, cada una con el tramo de su primer cambio.
+func (s *PublicacionService) Actividad(ctx context.Context, f model.FiltroActividad) ([]model.Actividad, error) {
+	f.Institucion = normalizarTexto(f.Institucion)
+	mejoras, err := s.repo.MejorasRecientes(ctx, f, maxActividad)
+	if err != nil {
+		return nil, err
+	}
+	lista := make([]model.Actividad, len(mejoras))
+	for i, m := range mejoras {
+		lista[i] = model.Actividad{
+			PropuestaID: m.PropuestaID, PublicacionID: m.PublicacionID,
+			Titulo: m.Titulo, Lenguaje: m.Lenguaje, Tipo: m.Tipo,
+			Autor: m.AutorPublicacion, Contribuyente: m.Contribuyente, AceptadaEn: m.AceptadaEn,
+			Cambio: ventanaCambio(m.Original, m.Codigo),
+		}
+	}
+	return lista, nil
+}
+
+// Transformaciones devuelve una página de mejoras aceptadas para «Antes y después», con los dos códigos completos.
+func (s *PublicacionService) Transformaciones(ctx context.Context, pagina int) ([]model.Transformacion, error) {
+	if pagina < 1 {
+		pagina = 1
+	}
+	mejoras, err := s.repo.UltimaMejoraPorPublicacion(ctx, PorPaginaTransformaciones, (pagina-1)*PorPaginaTransformaciones)
+	if err != nil {
+		return nil, err
+	}
+	lista := make([]model.Transformacion, len(mejoras))
+	for i, m := range mejoras {
+		lista[i] = model.Transformacion{
+			PropuestaID: m.PropuestaID, PublicacionID: m.PublicacionID,
+			Titulo: m.Titulo, Lenguaje: m.Lenguaje, Tipo: m.Tipo,
+			Autor: m.AutorPublicacion, Contribuyente: m.Contribuyente,
+			Original: m.Original, Codigo: m.Codigo, Explicacion: m.Explicacion, AceptadaEn: m.AceptadaEn,
+		}
+	}
+	return lista, nil
 }
 
 func (s *PublicacionService) Crear(ctx context.Context, autorID string, in model.NuevaPublicacionInput) (*model.Publicacion, error) {

@@ -48,18 +48,19 @@ type Sesion struct {
 type AuthService struct {
 	usuarios  *repository.UsuarioRepo
 	tokens    *repository.TokenRepo
+	eventos   *Eventos
 	secreto   []byte
 	hashFalso []byte
 }
 
-func NuevoAuthService(u *repository.UsuarioRepo, t *repository.TokenRepo, secreto string) (*AuthService, error) {
+func NuevoAuthService(u *repository.UsuarioRepo, t *repository.TokenRepo, e *Eventos, secreto string) (*AuthService, error) {
 	// Hash de relleno: si el correo no existe igual comparamos contra algo,
 	// para que la respuesta tarde lo mismo y no delate qué correos están registrados.
 	hashFalso, err := bcrypt.GenerateFromPassword([]byte("relleno-que-nunca-coincide"), costoBcrypt)
 	if err != nil {
 		return nil, err
 	}
-	return &AuthService{usuarios: u, tokens: t, secreto: []byte(secreto), hashFalso: hashFalso}, nil
+	return &AuthService{usuarios: u, tokens: t, eventos: e, secreto: []byte(secreto), hashFalso: hashFalso}, nil
 }
 
 func normalizarCorreo(c string) string {
@@ -104,6 +105,7 @@ func (s *AuthService) Login(ctx context.Context, in model.LoginInput) (*Sesion, 
 	if bcrypt.CompareHashAndPassword([]byte(u.HashContrasena), []byte(in.Contrasena)) != nil {
 		return nil, ErrCredenciales
 	}
+	s.eventos.InicioSesion(ctx, u.ID)
 	return s.emitirSesion(ctx, u)
 }
 
@@ -123,6 +125,8 @@ func (s *AuthService) Refrescar(ctx context.Context, refresh string) (*Sesion, e
 	if err != nil {
 		return nil, ErrSesionInvalida
 	}
+	// Renovar el token también es volver a la plataforma: cuenta para las métricas de actividad.
+	s.eventos.InicioSesion(ctx, u.ID)
 	return s.emitirSesion(ctx, u)
 }
 

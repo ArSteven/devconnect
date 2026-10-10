@@ -41,6 +41,7 @@ type TotalesPortafolio struct {
 	MejorasAportadas int `json:"mejoras_aportadas"`
 	MejorasRecibidas int `json:"mejoras_recibidas"`
 	Colaboradores    int `json:"colaboradores"`
+	PersonasAyudadas int `json:"personas_ayudadas"` // autores distintos cuyo código mejoró
 	Sesiones         int `json:"sesiones"`
 	RetosResueltos   int `json:"retos_resueltos"`
 }

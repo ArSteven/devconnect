@@ -33,9 +33,10 @@ func main() {
 	}
 
 	// Capas: repository -> service -> handler
+	eventos := service.NuevoEventos(repository.NuevoEventoRepo(pool))
 	usuarios := repository.NuevoUsuarioRepo(pool)
 	tokens := repository.NuevoTokenRepo(pool)
-	authService, err := service.NuevoAuthService(usuarios, tokens, cfg.JWTSecret)
+	authService, err := service.NuevoAuthService(usuarios, tokens, eventos, cfg.JWTSecret)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,11 +50,13 @@ func main() {
 	pubHandler := handler.NuevoPublicacionHandler(pubService)
 
 	estudiantes := repository.NuevoEstudianteRepo(pool)
-	estService := service.NuevoEstudianteService(estudiantes, suscripciones)
+	estService := service.NuevoEstudianteService(estudiantes, suscripciones, eventos)
 	estHandler := handler.NuevoEstudianteHandler(estService)
 
 	sesiones := repository.NuevoSesionRepo(pool)
 	sesHandler := handler.NuevoSesionHandler(service.NuevoSesionService(sesiones))
+
+	metHandler := handler.NuevoMetricasHandler(service.NuevoMetricasService(repository.NuevoMetricaRepo(pool)))
 
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
@@ -81,6 +84,7 @@ func main() {
 	pubHandler.Rutas(privado)
 	estHandler.Rutas(privado)
 	sesHandler.Rutas(privado)
+	metHandler.Rutas(privado)
 
 	log.Printf("API escuchando en :%s (%s)", cfg.Puerto, cfg.Entorno)
 	if err := r.Run(":" + cfg.Puerto); err != nil {

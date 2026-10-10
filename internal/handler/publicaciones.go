@@ -29,6 +29,8 @@ func (h *PublicacionHandler) Rutas(g *gin.RouterGroup) {
 	autores := middleware.RequiereRol("estudiante", "empresa")
 
 	g.GET("/publicaciones", h.listar)
+	g.GET("/actividad", h.actividad)
+	g.GET("/antes-y-despues", h.antesYDespues)
 	g.POST("/publicaciones", soloEstudiante, h.crear)
 	g.GET("/publicaciones/:id", h.detalle)
 	g.POST("/publicaciones/:id/propuestas", soloEstudiante, h.proponer)
@@ -50,6 +52,36 @@ func (h *PublicacionHandler) listar(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"publicaciones": lista, "pagina": max(f.Pagina, 1)})
+}
+
+// actividad: GET /actividad?lenguaje=go&tipo=pregunta&institucion=uts — las últimas mejoras aceptadas.
+func (h *PublicacionHandler) actividad(c *gin.Context) {
+	var f model.FiltroActividad
+	if err := c.ShouldBindQuery(&f); err != nil {
+		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "revisa los filtros de la actividad")
+		return
+	}
+	lista, err := h.svc.Actividad(c.Request.Context(), f)
+	if err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"actividad": lista})
+}
+
+// antesYDespues: GET /antes-y-despues?pagina=2 — mejoras aceptadas para reproducir, de la más nueva a la más antigua.
+func (h *PublicacionHandler) antesYDespues(c *gin.Context) {
+	var f model.FiltroTransformaciones
+	if err := c.ShouldBindQuery(&f); err != nil {
+		responderError(c, http.StatusBadRequest, "DATOS_INVALIDOS", "la página debe ser un número entre 1 y 1000")
+		return
+	}
+	lista, err := h.svc.Transformaciones(c.Request.Context(), f.Pagina)
+	if err != nil {
+		errorInterno(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"transformaciones": lista, "pagina": max(f.Pagina, 1), "por_pagina": service.PorPaginaTransformaciones})
 }
 
 func (h *PublicacionHandler) crearReto(c *gin.Context) {

@@ -17,10 +17,11 @@ var ErrYaSuscrito = errors.New("ya tienes una suscripción activa")
 type EstudianteService struct {
 	estudiantes   *repository.EstudianteRepo
 	suscripciones *repository.SuscripcionRepo
+	eventos       *Eventos
 }
 
-func NuevoEstudianteService(e *repository.EstudianteRepo, s *repository.SuscripcionRepo) *EstudianteService {
-	return &EstudianteService{estudiantes: e, suscripciones: s}
+func NuevoEstudianteService(e *repository.EstudianteRepo, s *repository.SuscripcionRepo, ev *Eventos) *EstudianteService {
+	return &EstudianteService{estudiantes: e, suscripciones: s, eventos: ev}
 }
 
 // Portafolio aplica la regla central del modelo freemium: cualquiera con sesión
@@ -87,6 +88,9 @@ func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitan
 	switch {
 	case esDueno || suscrita && perfil.ContactoVisible:
 		p.Contacto = &model.Contacto{Correo: correo}
+		if !esDueno {
+			s.eventos.ContactosVistos(ctx, visitanteID, []string{estudianteID})
+		}
 	case visitanteRol == "empresa" && !perfil.ContactoVisible:
 		// El estudiante decidió no compartirlo: a ninguna empresa se le ofrece
 		// suscribirse para ver un correo que de todos modos no vería.
@@ -224,11 +228,15 @@ func (s *EstudianteService) Candidatos(ctx context.Context, empresaID string) ([
 	if err != nil {
 		return nil, false, err
 	}
+	vistos := []string{}
 	for i := range lista {
 		if !activa || !lista[i].ContactoVisible {
 			lista[i].Correo = ""
+		} else {
+			vistos = append(vistos, lista[i].ID)
 		}
 	}
+	s.eventos.ContactosVistos(ctx, empresaID, vistos)
 	return lista, activa, nil
 }
 
@@ -287,7 +295,12 @@ func (s *EstudianteService) Suscribirse(ctx context.Context, empresaID, periodo 
 	if actual != nil {
 		return nil, ErrYaSuscrito
 	}
-	return s.suscripciones.Crear(ctx, empresaID, periodo)
+	sus, err := s.suscripciones.Crear(ctx, empresaID, periodo)
+	if err != nil {
+		return nil, err
+	}
+	s.eventos.Suscripcion(ctx, empresaID, sus.ID)
+	return sus, nil
 }
 
 // normalizarLista pasa a minúsculas, quita vacíos y repetidos, y limita la cantidad.
