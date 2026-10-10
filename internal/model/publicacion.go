@@ -14,7 +14,8 @@ type Publicacion struct {
 	Codigo           string     `json:"codigo"`
 	TotalLineas      int        `json:"total_lineas"` // en el feed solo llegan las primeras líneas del código
 	Estado           string     `json:"estado"`
-	Tipo             string     `json:"tipo"` // pregunta o reto
+	Tipo             string     `json:"tipo"`  // pregunta o reto
+	Nivel            *string    `json:"nivel"` // principiante o intermedio; null si no lo indicó (los retos no lo usan)
 	FechaLimite      *time.Time `json:"fecha_limite"`
 	Propuestas       int        `json:"total_propuestas"`
 	Comentarios      int        `json:"total_comentarios"`
@@ -125,6 +126,7 @@ type FiltroPublicaciones struct {
 	Institucion string `form:"institucion" binding:"max=150"`
 	Estado      string `form:"estado" binding:"omitempty,oneof=abierta resuelta"`
 	Tipo        string `form:"tipo" binding:"omitempty,oneof=pregunta reto"`
+	Nivel       string `form:"nivel" binding:"omitempty,oneof=principiante intermedio"`
 	Pagina      int    `form:"pagina" binding:"omitempty,min=1,max=1000"`
 }
 
@@ -133,6 +135,7 @@ type FiltroActividad struct {
 	Lenguaje    string `form:"lenguaje" binding:"omitempty,oneof=go angular typescript javascript python java php sql otro"`
 	Institucion string `form:"institucion" binding:"max=150"`
 	Tipo        string `form:"tipo" binding:"omitempty,oneof=pregunta reto"`
+	Nivel       string `form:"nivel" binding:"omitempty,oneof=principiante intermedio"`
 }
 
 type NuevaPublicacionInput struct {
@@ -140,6 +143,7 @@ type NuevaPublicacionInput struct {
 	Descripcion string `json:"descripcion" binding:"max=2000"`
 	Lenguaje    string `json:"lenguaje" binding:"required,oneof=go angular typescript javascript python java php sql otro"`
 	Codigo      string `json:"codigo" binding:"required,max=20000"`
+	Nivel       string `json:"nivel" binding:"omitempty,oneof=principiante intermedio"`
 }
 
 // NuevoRetoInput: el código inicial es opcional (puede ser una plantilla o nada).

@@ -109,6 +109,9 @@ func (s *PublicacionService) Crear(ctx context.Context, autorID string, in model
 		Codigo:      in.Codigo, // el código se guarda tal cual: es texto, nunca se ejecuta
 		Tipo:        "pregunta",
 	}
+	if in.Nivel != "" {
+		p.Nivel = &in.Nivel
+	}
 	if err := s.repo.Crear(ctx, p); err != nil {
 		return nil, err
 	}

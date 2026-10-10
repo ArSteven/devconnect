@@ -70,11 +70,13 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		ctxPing, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
-		if err := pool.Ping(ctxPing); err != nil {
+		// La última migración aplicada confirma qué versión de la base quedó desplegada.
+		var migracion string
+		if err := pool.QueryRow(ctxPing, `SELECT COALESCE(max(version), '') FROM schema_migrations`).Scan(&migracion); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"estado": "error", "bd": "sin conexión"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"estado": "ok", "bd": "ok"})
+		c.JSON(http.StatusOK, gin.H{"estado": "ok", "bd": "ok", "migracion": migracion})
 	})
 
 	v1 := r.Group("/api/v1")

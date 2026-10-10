@@ -43,7 +43,7 @@ SELECT p.id::text, p.autor_id::text, COALESCE(e.razon_social, u.nombre),
        COALESCE(pe.institucion, ''), COALESCE(pe.github_url, ''),
        p.titulo, COALESCE(p.descripcion, ''), p.lenguaje, ` + codigo + `,
        COALESCE(array_length(string_to_array(rtrim(p.codigo, E'\r\n'), E'\n'), 1), 0),
-       p.estado, p.tipo, p.fecha_limite, p.creado_en,
+       p.estado, p.tipo, p.nivel, p.fecha_limite, p.creado_en,
        (SELECT count(*) FROM propuestas_mejora pm WHERE pm.publicacion_id = p.id),
        (SELECT count(*) FROM comentarios c WHERE c.publicacion_id = p.id),
        (SELECT count(DISTINCT pm.autor_id) FROM propuestas_mejora pm WHERE pm.publicacion_id = p.id),
@@ -58,7 +58,7 @@ func escanearPublicacion(row pgx.Row) (model.Publicacion, error) {
 	var p model.Publicacion
 	err := row.Scan(&p.ID, &p.AutorID, &p.AutorNombre, &p.AutorInstitucion, &p.AutorGithub,
 		&p.Titulo, &p.Descripcion, &p.Lenguaje, &p.Codigo, &p.TotalLineas,
-		&p.Estado, &p.Tipo, &p.FechaLimite, &p.CreadoEn, &p.Propuestas, &p.Comentarios,
+		&p.Estado, &p.Tipo, &p.Nivel, &p.FechaLimite, &p.CreadoEn, &p.Propuestas, &p.Comentarios,
 		&p.TotalProponentes, &p.Proponentes)
 	return p, err
 }
@@ -73,9 +73,10 @@ func (r *PublicacionRepo) Listar(ctx context.Context, f model.FiltroPublicacione
 		  AND ($4 = '' OR `+sinTildes("p.titulo")+` LIKE '%' || $4 || '%'
 		               OR `+sinTildes("COALESCE(p.descripcion, '')")+` LIKE '%' || $4 || '%')
 		  AND ($5 = '' OR `+sinTildes("COALESCE(pe.institucion, '')")+` = $5)
+		  AND ($8 = '' OR p.nivel = $8)
 		ORDER BY p.creado_en DESC
 		LIMIT $6 OFFSET $7`,
-		f.Lenguaje, f.Estado, f.Tipo, escaparLike(f.Q), f.Institucion, limite, offset)
+		f.Lenguaje, f.Estado, f.Tipo, escaparLike(f.Q), f.Institucion, limite, offset, f.Nivel)
 	if err != nil {
 		return nil, err
 	}
@@ -103,13 +104,13 @@ func (r *PublicacionRepo) Obtener(ctx context.Context, id string) (*model.Public
 	return &p, nil
 }
 
-// Crear guarda una pregunta o un reto; p.Tipo y p.FechaLimite los fija el service.
+// Crear guarda una pregunta o un reto; p.Tipo, p.FechaLimite y p.Nivel los fija el service.
 func (r *PublicacionRepo) Crear(ctx context.Context, p *model.Publicacion) error {
 	return r.db.QueryRow(ctx,
-		`INSERT INTO publicaciones (autor_id, titulo, descripcion, lenguaje, codigo, tipo, fecha_limite)
-		 VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7)
+		`INSERT INTO publicaciones (autor_id, titulo, descripcion, lenguaje, codigo, tipo, fecha_limite, nivel)
+		 VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8)
 		 RETURNING id::text, estado, creado_en`,
-		p.AutorID, p.Titulo, p.Descripcion, p.Lenguaje, p.Codigo, p.Tipo, p.FechaLimite,
+		p.AutorID, p.Titulo, p.Descripcion, p.Lenguaje, p.Codigo, p.Tipo, p.FechaLimite, p.Nivel,
 	).Scan(&p.ID, &p.Estado, &p.CreadoEn)
 }
 
@@ -255,8 +256,9 @@ func (r *PublicacionRepo) MejorasRecientes(ctx context.Context, f model.FiltroAc
 		   AND ($1 = '' OR p.lenguaje = $1)
 		   AND ($2 = '' OR p.tipo = $2)
 		   AND ($3 = '' OR `+sinTildes("COALESCE(pea.institucion, '')")+` = $3)
+		   AND ($5 = '' OR p.nivel = $5)
 		 ORDER BY pm.actualizado_en DESC
-		 LIMIT $4`, f.Lenguaje, f.Tipo, f.Institucion, limite)
+		 LIMIT $4`, f.Lenguaje, f.Tipo, f.Institucion, limite, f.Nivel)
 }
 
 func (r *PublicacionRepo) mejoras(ctx context.Context, sql string, args ...any) ([]model.MejoraCompleta, error) {
