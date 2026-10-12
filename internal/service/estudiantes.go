@@ -28,7 +28,7 @@ func NuevoEstudianteService(e *repository.EstudianteRepo, s *repository.Suscripc
 // ve el portafolio, pero el contacto solo lo ve el propio estudiante o una
 // empresa con suscripción vigente, y a la empresa solo si el estudiante lo permite.
 func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitanteRol, estudianteID string) (*model.Portafolio, error) {
-	perfil, nacimiento, correo, err := s.estudiantes.Perfil(ctx, estudianteID)
+	perfil, nacimiento, contacto, err := s.estudiantes.Perfil(ctx, estudianteID)
 	if errors.Is(err, repository.ErrNoEncontrado) {
 		return nil, ErrNoEncontrada
 	}
@@ -87,7 +87,7 @@ func (s *EstudianteService) Portafolio(ctx context.Context, visitanteID, visitan
 	}
 	switch {
 	case esDueno || suscrita && perfil.ContactoVisible:
-		p.Contacto = &model.Contacto{Correo: correo}
+		p.Contacto = &contacto
 		if !esDueno {
 			s.eventos.ContactosVistos(ctx, visitanteID, []string{estudianteID})
 		}
@@ -119,6 +119,13 @@ func (s *EstudianteService) ActualizarPerfil(ctx context.Context, id string, in 
 	// un enlace "javascript:" ni disfraza otro sitio como su LinkedIn.
 	if !enlaceValido(in.GithubURL, "github.com") || !enlaceValido(in.LinkedinURL, "linkedin.com") || !enlaceValido(in.SitioURL, "") {
 		return fmt.Errorf("%w: los enlaces deben empezar por https:// y apuntar al sitio correcto", ErrPerfilInvalido)
+	}
+	if in.Telefono != nil {
+		telefono, ok := normalizarTelefono(*in.Telefono)
+		if !ok {
+			return fmt.Errorf("%w: el teléfono debe tener entre 7 y 15 dígitos", ErrPerfilInvalido)
+		}
+		in.Telefono = &telefono
 	}
 	if in.FechaNacimiento != "" {
 		f, err := time.Parse("2006-01-02", in.FechaNacimiento)
@@ -157,6 +164,31 @@ func enlaceValido(u, dominio string) bool {
 	}
 	host := strings.ToLower(p.Host)
 	return host == dominio || strings.HasSuffix(host, "."+dominio)
+}
+
+// normalizarTelefono quita espacios, guiones, puntos y paréntesis ("310 482-7156" queda "3104827156").
+// Acepta un + inicial para el indicativo y de 7 a 15 dígitos, igual que la restricción de la base.
+func normalizarTelefono(t string) (string, bool) {
+	t = strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '-', '.', '(', ')':
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(t))
+	if t == "" {
+		return "", true
+	}
+	digitos := strings.TrimPrefix(t, "+")
+	if len(digitos) < 7 || len(digitos) > 15 {
+		return "", false
+	}
+	for _, r := range digitos {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return t, true
 }
 
 func calcularEdad(nacimiento, hoy time.Time) int {
@@ -217,8 +249,8 @@ const maxCandidatos = 300
 
 var ErrDemasiadosCandidatos = fmt.Errorf("tu lista ya tiene %d candidatos: quita alguno antes de guardar otro", maxCandidatos)
 
-// Candidatos devuelve la lista guardada. El correo solo sale con suscripción activa
-// y si el estudiante permite mostrarlo: la regla se aplica aquí, no en el frontend.
+// Candidatos devuelve la lista guardada. El correo y el teléfono solo salen con suscripción
+// activa y si el estudiante permite mostrarlos: la regla se aplica aquí, no en el frontend.
 func (s *EstudianteService) Candidatos(ctx context.Context, empresaID string) ([]model.Candidato, bool, error) {
 	lista, err := s.estudiantes.ListarCandidatos(ctx, empresaID)
 	if err != nil {
@@ -231,7 +263,7 @@ func (s *EstudianteService) Candidatos(ctx context.Context, empresaID string) ([
 	vistos := []string{}
 	for i := range lista {
 		if !activa || !lista[i].ContactoVisible {
-			lista[i].Correo = ""
+			lista[i].Correo, lista[i].Telefono = "", ""
 		} else {
 			vistos = append(vistos, lista[i].ID)
 		}

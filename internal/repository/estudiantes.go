@@ -18,15 +18,15 @@ func NuevoEstudianteRepo(db *pgxpool.Pool) *EstudianteRepo {
 	return &EstudianteRepo{db: db}
 }
 
-// Perfil devuelve el perfil completo, la fecha de nacimiento y, aparte, el correo
-// (que solo se muestra con permiso).
-func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEstudiante, *time.Time, string, error) {
+// Perfil devuelve el perfil completo, la fecha de nacimiento y, aparte, el contacto
+// (correo y teléfono, que solo se muestran con permiso).
+func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEstudiante, *time.Time, model.Contacto, error) {
 	var p model.PerfilEstudiante
 	var nacimiento *time.Time
-	var correo string
+	var contacto model.Contacto
 	var semestre, anioInicio, anioFin *int16
 	err := r.db.QueryRow(ctx,
-		`SELECT u.id::text, u.nombre, u.correo,
+		`SELECT u.id::text, u.nombre, u.correo, COALESCE(pe.telefono, ''),
 		        COALESCE(pe.titular, ''), pe.fecha_nacimiento,
 		        COALESCE(pe.programa, ''), COALESCE(pe.institucion, ''), pe.semestre,
 		        COALESCE(pe.estado_academico, ''), pe.anio_inicio, pe.anio_fin,
@@ -36,7 +36,7 @@ func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEs
 		   FROM usuarios u
 		   JOIN perfiles_estudiante pe ON pe.usuario_id = u.id
 		  WHERE u.id = $1`, id,
-	).Scan(&p.ID, &p.Nombre, &correo,
+	).Scan(&p.ID, &p.Nombre, &contacto.Correo, &contacto.Telefono,
 		&p.Titular, &nacimiento,
 		&p.Programa, &p.Institucion, &semestre,
 		&p.EstadoAcademico, &anioInicio, &anioFin,
@@ -44,16 +44,16 @@ func (r *EstudianteRepo) Perfil(ctx context.Context, id string) (*model.PerfilEs
 		&p.GithubURL, &p.LinkedinURL, &p.SitioURL,
 		&p.Stack, &p.Idiomas, &p.Experiencia, &p.Biografia, &p.ContactoVisible)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, "", ErrNoEncontrado
+		return nil, nil, contacto, ErrNoEncontrado
 	}
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, contacto, err
 	}
 	p.Semestre, p.AnioInicio, p.AnioFin = aInt(semestre), aInt(anioInicio), aInt(anioFin)
 	if p.Experiencia == nil {
 		p.Experiencia = []model.Experiencia{}
 	}
-	return &p, nacimiento, correo, nil
+	return &p, nacimiento, contacto, nil
 }
 
 func aInt(v *int16) *int {
@@ -226,6 +226,7 @@ func (r *EstudianteRepo) ActualizarPerfil(ctx context.Context, id string, in mod
 		        github_url = NULLIF($13, ''), linkedin_url = NULLIF($14, ''), sitio_url = NULLIF($15, ''),
 		        stack = $16, idiomas = $17, experiencia = $18, biografia = NULLIF($19, ''),
 		        contacto_visible = COALESCE($20::boolean, contacto_visible),
+		        telefono = CASE WHEN $21::text IS NULL THEN telefono ELSE NULLIF($21::text, '') END,
 		        actualizado_en = now()
 		  WHERE usuario_id = $1`,
 		id, in.Titular, in.FechaNacimiento,
@@ -234,7 +235,7 @@ func (r *EstudianteRepo) ActualizarPerfil(ctx context.Context, id string, in mod
 		in.Ciudad, in.Disponibilidad, in.Modalidad,
 		in.GithubURL, in.LinkedinURL, in.SitioURL,
 		in.Stack, in.Idiomas, in.Experiencia, in.Biografia,
-		in.ContactoVisible)
+		in.ContactoVisible, in.Telefono)
 	return err
 }
 
@@ -338,10 +339,10 @@ func (r *EstudianteRepo) BuscarTalento(ctx context.Context, f model.FiltroTalent
 	return lista, rows.Err()
 }
 
-// ListarCandidatos devuelve los estudiantes que guardó la empresa, con su correo.
-// El service decide si el correo se entrega (suscripción activa y contacto visible).
+// ListarCandidatos devuelve los estudiantes que guardó la empresa, con su correo y teléfono.
+// El service decide si el contacto se entrega (suscripción activa y contacto visible).
 func (r *EstudianteRepo) ListarCandidatos(ctx context.Context, empresaID string) ([]model.Candidato, error) {
-	rows, err := r.db.Query(ctx, selectTarjeta(", u.correo, g.creado_en, pe.contacto_visible")+`
+	rows, err := r.db.Query(ctx, selectTarjeta(", u.correo, COALESCE(pe.telefono, ''), g.creado_en, pe.contacto_visible")+`
 		  JOIN candidatos_guardados g ON g.estudiante_id = u.id AND g.empresa_id = $1::uuid
 		 ORDER BY g.creado_en DESC`, empresaID)
 	if err != nil {
@@ -352,7 +353,7 @@ func (r *EstudianteRepo) ListarCandidatos(ctx context.Context, empresaID string)
 	lista := []model.Candidato{}
 	for rows.Next() {
 		var c model.Candidato
-		t, err := escanearTarjeta(rows, &c.Correo, &c.GuardadoEn, &c.ContactoVisible)
+		t, err := escanearTarjeta(rows, &c.Correo, &c.Telefono, &c.GuardadoEn, &c.ContactoVisible)
 		if err != nil {
 			return nil, err
 		}

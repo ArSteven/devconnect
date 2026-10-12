@@ -23,7 +23,7 @@ const (
 	emisor          = "devconnect"
 	// VersionTerminos es la versión vigente de los términos y la política de datos.
 	// La define el servidor: el cliente solo dice si acepta, no qué versión.
-	VersionTerminos = "1.0"
+	VersionTerminos = "1.1"
 )
 
 var (

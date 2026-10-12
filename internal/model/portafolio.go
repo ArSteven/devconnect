@@ -32,7 +32,7 @@ type PerfilEstudiante struct {
 	Idiomas         []string      `json:"idiomas"`
 	Experiencia     []Experiencia `json:"experiencia"`
 	Biografia       string        `json:"biografia"`
-	ContactoVisible bool          `json:"contacto_visible"` // false = no muestra el correo a las empresas
+	ContactoVisible bool          `json:"contacto_visible"` // false = no muestra el correo ni el teléfono a las empresas
 }
 
 type TotalesPortafolio struct {
@@ -86,7 +86,8 @@ type EventoHistorial struct {
 }
 
 type Contacto struct {
-	Correo string `json:"correo"`
+	Correo   string `json:"correo"`
+	Telefono string `json:"telefono,omitempty"` // vacío si no lo ha escrito
 }
 
 type Portafolio struct {
@@ -99,7 +100,7 @@ type Portafolio struct {
 	Historial         []EventoHistorial `json:"historial"`
 	Contacto          *Contacto         `json:"contacto"`           // null si no tiene permiso
 	ContactoBloqueado bool              `json:"contacto_bloqueado"` // true = la empresa debe suscribirse
-	ContactoOculto    bool              `json:"contacto_oculto"`    // true = el estudiante decidió no compartir su correo
+	ContactoOculto    bool              `json:"contacto_oculto"`    // true = el estudiante decidió no compartir su contacto
 	Guardado          bool              `json:"guardado"`           // la empresa que lo ve ya lo tiene en su lista
 }
 
@@ -125,13 +126,14 @@ type TarjetaTalento struct {
 	Guardado         bool     `json:"guardado"`
 }
 
-// Candidato es una tarjeta de talento guardada por una empresa. El correo solo
-// viene si la empresa tiene suscripción activa.
+// Candidato es una tarjeta de talento guardada por una empresa. El correo y el teléfono
+// solo vienen si la empresa tiene suscripción activa.
 type Candidato struct {
 	TarjetaTalento
 	Correo          string    `json:"correo,omitempty"`
+	Telefono        string    `json:"telefono,omitempty"`
 	GuardadoEn      time.Time `json:"guardado_en"`
-	ContactoVisible bool      `json:"-"` // el service lo usa para decidir si entrega el correo
+	ContactoVisible bool      `json:"-"` // el service lo usa para decidir si entrega el contacto
 }
 
 // FiltroTalentoQuery son los parámetros de GET /talento, validados con binding.
@@ -204,7 +206,8 @@ type ActualizarPerfilInput struct {
 	Idiomas         []string      `json:"idiomas" binding:"max=6,dive,min=2,max=40"`
 	Experiencia     []Experiencia `json:"experiencia" binding:"max=10,dive"`
 	Biografia       string        `json:"biografia" binding:"max=1000"`
-	ContactoVisible *bool         `json:"contacto_visible"` // nil = no lo cambia
+	ContactoVisible *bool         `json:"contacto_visible"`                    // nil = no lo cambia
+	Telefono        *string       `json:"telefono" binding:"omitempty,max=30"` // nil = no lo cambia; "" = lo borra
 }
 
 type SuscribirseInput struct {
