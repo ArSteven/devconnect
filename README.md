@@ -1,5 +1,7 @@
 # DevConnect API
 
+[![CI](https://github.com/ArSteven/devconnect/actions/workflows/ci.yml/badge.svg)](https://github.com/ArSteven/devconnect/actions/workflows/ci.yml)
+
 Backend de **DevConnect**, una red social donde estudiantes de programación aprenden mejorando el código de otros y construyen un portafolio que las empresas pueden verificar.
 
 **Demo:** [devconnect-web-mauve.vercel.app](https://devconnect-web-mauve.vercel.app) · **Frontend:** [ArSteven/devconnect-web](https://github.com/ArSteven/devconnect-web)
@@ -36,8 +38,10 @@ Capas estrictas: `handler → service → repository`. Los handlers no tocan SQL
 
 ## Decisiones que vale la pena mirar
 
+El detalle, con alternativas y lo que se sacrifica en cada caso, está en [DECISIONES.md](DECISIONES.md).
+
 - **El servidor nunca ejecuta código de usuarios.** JavaScript, TypeScript, Python y SQL corren en el navegador dentro de un iframe aislado con CSP `sandbox`; Go se reenvía al Go Playground oficial (`internal/service/ejecucion.go`). La API solo guarda la constancia de la verificación.
-- **Autenticación:** contraseñas con bcrypt, token de acceso JWT corto (se validan firma, algoritmo, emisor y vencimiento) y refresh token de un solo uso que se revoca al rotar o al cerrar sesión.
+- **Autenticación:** contraseñas con bcrypt; token de acceso JWT de 15 minutos que el frontend guarda solo en memoria (se validan firma, algoritmo, emisor y vencimiento); refresh token opaco de un solo uso en una cookie `HttpOnly` + `SameSite=Strict`, guardado en la base solo como hash y consumido con un `UPDATE … RETURNING` atómico.
 - **Login sin filtrar información:** se compara contra un hash falso cuando el correo no existe, para que el tiempo de respuesta no revele qué cuentas están registradas.
 - **Límite de intentos** con token bucket (`x/time/rate`): 5 por minuto por correo en el login y 10 ejecuciones de Go por minuto por persona; cuerpo máximo de 1 MB y cabeceras de seguridad en todas las respuestas.
 - **Ley 1581 de 2012:** el registro exige la autorización expresa de tratamiento de datos y queda registrada.
@@ -83,9 +87,20 @@ go run ./cmd/api
 
 Las migraciones se aplican solas al arrancar. La API queda en `http://localhost:8080` y `GET /health` confirma la conexión a la base.
 
+### Pruebas
+
 ```bash
 go test ./...
 ```
+
+Las pruebas de autenticación que necesitan base de datos (refresh token de un solo uso, uso concurrente del mismo token, revocación en el logout, correos duplicados) solo corren si defines `TEST_DATABASE_URL` apuntando a una base exclusiva para pruebas:
+
+```bash
+createdb devconnect_test
+TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/devconnect_test?sslmode=disable" go test -race ./...
+```
+
+En GitHub Actions corren siempre, contra un PostgreSQL 16 que levanta el workflow.
 
 ## Contexto
 
