@@ -33,10 +33,10 @@ func LimiteCuerpo(maxBytes int64) gin.HandlerFunc {
 // para frenar ataques de fuerza bruta. Vive en memoria: suficiente para una
 // sola instancia de la API, que es como corre el prototipo.
 type Limitador struct {
-	mu      sync.Mutex
-	claves  map[string]*entrada
-	tasa    rate.Limit
-	rafaga  int
+	mu     sync.Mutex
+	claves map[string]*entrada
+	tasa   rate.Limit
+	rafaga int
 }
 
 type entrada struct {
